@@ -1,8 +1,24 @@
+local Globals = getgenv()
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+local RemoteEvent = ReplicatedStorage:WaitForChild("RemoteEvent")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- // Game State
+local function IdentifyGameState()
+    local TempGui = LocalPlayer:WaitForChild("PlayerGui")
+    while true do
+        if TempGui:FindFirstChild("ReactLobbyHud") then return "LOBBY"
+        elseif TempGui:FindFirstChild("ReactUniversalHotbar") then return "GAME" end
+        task.wait(1)
+    end
+end
+local GameState = IdentifyGameState()
 
 local TDS = {}
 TDS.PlacedTowers = {}
@@ -10,31 +26,569 @@ TDS.SavedDifficulty = nil
 
 -- // Teleporter
 local function SmartTeleportToLobby()
-    local lobbyId = 3260590327
     pcall(function()
-        TeleportService:Teleport(lobbyId)
+        TeleportService:Teleport(3260590327)
     end)
 end
 
--- // Payload Checker + Teleport
+-- // Payload + Rejoin
 local function RejoinMatch()
     local success = false
-
     repeat
         local StateFolder = ReplicatedStorage:FindFirstChild("State")
         local CurrentMode = StateFolder and StateFolder.Difficulty.Value
         if not CurrentMode or CurrentMode == "" then
             CurrentMode = TDS.SavedDifficulty
         end
-
         if CurrentMode and CurrentMode ~= "" then
             local ok, result = pcall(function()
                 local payload
                 local EventMode = StateFolder:FindFirstChild("Mode") and StateFolder.Mode.Value
-
                 if CurrentMode == "PizzaParty" then
                     payload = { mode = "halloween", count = 1 }
                 elseif CurrentMode == "Hardcore" then
+                    payload = { mode = "hardcore", difficulty = "Easy", count = 1 }
+                elseif CurrentMode == "Voidcore" then
+                    payload = { mode = "hardcore", difficulty = "Hard", count = 1 }
+                elseif CurrentMode == "PollutedWasteland" then
+                    payload = { mode = "polluted", count = 1 }
+                elseif CurrentMode == "Badlands" then
+                    payload = { mode = "badlands", count = 1 }
+                elseif EventMode == "DuckEvent" then
+                    payload = { difficulty = CurrentMode, mode = "ducky2025", count = 1 }
+                elseif CurrentMode == "Trial" then
+                    SmartTeleportToLobby()
+                    return true
+                else
+                    payload = { difficulty = CurrentMode, mode = "survival", count = 1 }
+                end
+                return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload)
+            end)
+            if ok and result then success = true
+            else task.wait(0.5) end
+        else
+            task.wait(1)
+        end
+    until success
+end
+
+-- // Helpers
+local function CheckResOk(data)
+    if data == true then return true end
+    if type(data) == "table" and data.Success == true then return true end
+    local ok, IsModel = pcall(function() return data and data:IsA("Model") end)
+    if ok and IsModel then return true end
+    if type(data) == "userdata" then return true end
+    return false
+end
+
+local function GetCurrentWave()
+    local label
+    repeat
+        task.wait(0.5)
+        local hud = PlayerGui:FindFirstChild("ReactGameTopGameDisplay")
+        label = hud and hud.Frame.wave.container:FindFirstChild("value")
+    until label ~= nil
+    return tonumber(label.Text:match("(%d+)")) or 0
+end
+
+local function RunVoteSkip()
+    while true do
+        local ok = pcall(function()
+            RemoteFunc:InvokeServer("Voting", "Skip")
+        end)
+        if ok then break end
+        task.wait(0.1)
+    end
+end
+
+local function DoPlaceTower(TName, TPos, rot)
+    while true do
+        local ok, res = pcall(function()
+            return RemoteFunc:InvokeServer("Troops", "Place", {
+                Rotation = rot or CFrame.new(),
+                Position = TPos
+            }, TName)
+        end)
+        if ok and CheckResOk(res) then return true end
+        task.wait(0.25)
+    end
+end
+
+local function DoUpgradeTower(TObj, PathId)
+    while true do
+        local ok, res = pcall(function()
+            return RemoteFunc:InvokeServer("Troops", "Upgrade", "Set", {
+                Troop = TObj,
+                Path = PathId
+            })
+        end)
+        if ok and CheckResOk(res) then return true end
+        task.wait(0.25)
+    end
+end
+
+local function DoSellTower(TObj)
+    while true do
+        local ok, res = pcall(function()
+            return RemoteFunc:InvokeServer("Troops", "Sell", { Troop = TObj })
+        end)
+        if ok and CheckResOk(res) then return true end
+        task.wait(0.25)
+    end
+end
+
+local function DoSetOption(TObj, OptName, OptVal)
+    while true do
+        local ok, res = pcall(function()
+            return RemoteFunc:InvokeServer("Troops", "Option", "Set", {
+                Troop = TObj,
+                Name = OptName,
+                Value = OptVal
+            })
+        end)
+        if ok and CheckResOk(res) then return true end
+        task.wait(0.25)
+    end
+end
+
+local function DoActivateAbility(TObj, AbName, AbData)
+    AbData = type(AbData) == "table" and AbData or nil
+    while true do
+        local ok, res = pcall(function()
+            return RemoteFunc:InvokeServer("Troops", "Abilities", "Activate",
+                { Troop = TObj, Name = AbName, Data = AbData })
+        end)
+        if ok and CheckResOk(res) then return true end
+        task.wait(0.25)
+    end
+end
+
+local function CastMapVote(MapId)
+    RemoteEvent:FireServer("LobbyVoting", "Vote", MapId, Vector3.new(12.59, 10.64, 52.01))
+end
+
+local function LobbyReadyUp()
+    pcall(function()
+        RemoteEvent:FireServer("LobbyVoting", "Ready")
+    end)
+end
+
+local function SelectMapOverride(MapId, isVip)
+    if isVip then
+        RemoteFunc:InvokeServer("LobbyVoting", "Override", MapId)
+    end
+    task.wait(3)
+    CastMapVote(MapId)
+    task.wait(1)
+    LobbyReadyUp()
+end
+
+local function IsMapAvailable(name)
+    for _, g in ipairs(workspace:GetDescendants()) do
+        if g:IsA("SurfaceGui") and g.Name == "MapDisplay" then
+            local t = g:FindFirstChild("Title")
+            if t and t.Text == name then return true end
+        end
+    end
+    local hasVoted = false
+    repeat
+        local ok, IntermissionFrame = pcall(function()
+            return PlayerGui:WaitForChild("ReactGameIntermission"):WaitForChild("Frame")
+        end)
+        if not ok then break end
+        local VetoValue = IntermissionFrame.buttons.veto.value
+        local VetoText = VetoValue.Text
+        if VetoText ~= "" then
+            if not VetoText:find("Veto") then return false end
+            local currentStr, totalStr = VetoText:match("(%d+)/(%d+)")
+            local current, total = tonumber(currentStr), tonumber(totalStr)
+            if not hasVoted and total and total > 0 and current == 0 then
+                RemoteEvent:FireServer("LobbyVoting", "Veto")
+                hasVoted = true
+            end
+        end
+        local found = false
+        for _, g in ipairs(workspace:GetDescendants()) do
+            if g:IsA("SurfaceGui") and g.Name == "MapDisplay" then
+                local t = g:FindFirstChild("Title")
+                if t and t.Text == name then found = true; break end
+            end
+        end
+        task.wait(1)
+        local TotalPlayer = #Players:GetChildren()
+        local isFull = VetoText == "Veto ("..TotalPlayer.."/"..TotalPlayer..")"
+        if found or isFull then break end
+    until false
+    for _, g in ipairs(workspace:GetDescendants()) do
+        if g:IsA("SurfaceGui") and g.Name == "MapDisplay" then
+            local t = g:FindFirstChild("Title")
+            if t and t.Text == name then return true end
+        end
+    end
+    return false
+end
+
+local function MatchReadyUp()
+    local stateReplicators = ReplicatedStorage:WaitForChild("StateReplicators")
+    local voteReplicator = stateReplicators:WaitForChild("VoteReplicator")
+    local gameStateReplicator = stateReplicators:WaitForChild("GameStateReplicator")
+    if gameStateReplicator:GetAttribute("GameStarted") == true then return end
+    local voteTitle = voteReplicator:GetAttribute("Title")
+    if voteTitle == "Ready?" and voteReplicator:GetAttribute("Enabled") == true then
+        RunVoteSkip()
+        return
+    end
+    local yieldSignal = Instance.new("BindableEvent")
+    local voteConn = voteReplicator.AttributeChanged:Connect(function(attr)
+        if attr == "Enabled" and voteReplicator:GetAttribute("Enabled") == true then
+            if voteReplicator:GetAttribute("Title") == "Ready?" then
+                RunVoteSkip()
+                yieldSignal:Fire()
+            end
+        elseif attr == "Title" and voteReplicator:GetAttribute("Title") ~= "Ready?" then
+            yieldSignal:Fire()
+        end
+    end)
+    local gameConn = gameStateReplicator:GetAttributeChangedSignal("GameStarted"):Connect(function()
+        if gameStateReplicator:GetAttribute("GameStarted") == true then
+            yieldSignal:Fire()
+        end
+    end)
+    yieldSignal.Event:Wait()
+    voteConn:Disconnect()
+    gameConn:Disconnect()
+    yieldSignal:Destroy()
+end
+
+-- // Auto Rejoin
+task.spawn(function()
+    local stateReplicators = ReplicatedStorage:WaitForChild("StateReplicators")
+    local gameStateReplicator = stateReplicators:WaitForChild("GameStateReplicator")
+    gameStateReplicator:GetAttributeChangedSignal("GameOver"):Connect(function()
+        if gameStateReplicator:GetAttribute("GameOver") == true then
+            task.wait(5)
+            RejoinMatch()
+        end
+    end)
+end)
+
+-- // Public API
+function TDS:Mode(difficulty)
+    self.SavedDifficulty = difficulty
+    if GameState ~= "LOBBY" then return false end
+    local LobbyHud = PlayerGui:WaitForChild("ReactLobbyHud", 30)
+    local frame = LobbyHud and LobbyHud:WaitForChild("Frame", 30)
+    local MatchMaking = frame and frame:WaitForChild("matchmaking", 30)
+    if MatchMaking then
+        local success = false
+        repeat
+            local ok, result = pcall(function()
+                local payload
+                if difficulty == "Hardcore" then
+                    payload = { mode = "hardcore", difficulty = "Easy", count = 1 }
+                elseif difficulty == "Voidcore" then
+                    payload = { mode = "hardcore", difficulty = "Hard", count = 1 }
+                elseif difficulty == "PizzaParty" then
+                    payload = { mode = "halloween", count = 1 }
+                elseif difficulty == "PollutedWasteland" then
+                    payload = { mode = "polluted", count = 1 }
+                elseif difficulty == "Badlands" then
+                    payload = { mode = "badlands", count = 1 }
+                else
+                    payload = { difficulty = difficulty, mode = "survival", count = 1 }
+                end
+                return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload)
+            end)
+            if ok and CheckResOk(result) then success = true
+            else task.wait(0.5) end
+        until success
+    end
+    return true
+end
+
+function TDS:Loadout(towers)
+    if GameState ~= "GAME" then return end
+    -- supports both table and varargs
+    if type(towers) ~= "table" then
+        towers = {towers, select(2, ...)}
+    end
+    local StateReplicators = ReplicatedStorage:FindFirstChild("StateReplicators")
+    local CurrentlyEquipped = {}
+    if StateReplicators then
+        for _, folder in ipairs(StateReplicators:GetChildren()) do
+            if folder.Name == "PlayerReplicator" and folder:GetAttribute("UserId") == LocalPlayer.UserId then
+                local EquippedAttr = folder:GetAttribute("EquippedTowers")
+                if type(EquippedAttr) == "string" then
+                    local CleanedJson = EquippedAttr:match("%[.*%]")
+                    local ok, decoded = pcall(function()
+                        return HttpService:JSONDecode(CleanedJson)
+                    end)
+                    if ok and type(decoded) == "table" then
+                        CurrentlyEquipped = decoded
+                    end
+                end
+            end
+        end
+    end
+    for _, CurrentTower in ipairs(CurrentlyEquipped) do
+        if CurrentTower ~= "None" then
+            pcall(function()
+                RemoteEvent:FireServer("Inventory", "Unequip", "Tower", CurrentTower)
+                task.wait(0.3)
+            end)
+        end
+    end
+    task.wait(0.5)
+    for _, TowerName in ipairs(towers) do
+        if TowerName and TowerName ~= "" then
+            pcall(function()
+                RemoteEvent:FireServer("Inventory", "Equip", "Tower", TowerName)
+                task.wait(0.3)
+            end)
+        end
+    end
+    task.wait(0.5)
+    return true
+end
+
+function TDS:WaitForWave(targetWave)
+    if GameState ~= "GAME" then return false end
+    while GetCurrentWave() < targetWave do
+        task.wait(0.5)
+    end
+    return true
+end
+
+function TDS:GetWave()
+    return GetCurrentWave()
+end
+
+function TDS:Ready()
+    if GameState ~= "GAME" then return false end
+    MatchReadyUp()
+end
+
+function TDS:GameInfo(name, list)
+    if GameState ~= "GAME" then return false end
+    local VoteGui = PlayerGui:WaitForChild("ReactGameIntermission", 30)
+    if not (VoteGui and VoteGui.Enabled and VoteGui:WaitForChild("Frame", 5)) then return end
+    local stateReplicators = ReplicatedStorage:WaitForChild("StateReplicators", 5)
+    local gameStateReplicator = stateReplicators and stateReplicators:FindFirstChild("GameStateReplicator")
+    local isVip = MarketplaceService:UserOwnsGamePassAsync(LocalPlayer.UserId, 10518590)
+        or (gameStateReplicator and gameStateReplicator:GetAttribute("IsPrivateServer") == true)
+    if isVip then
+        SelectMapOverride(name, true)
+    elseif IsMapAvailable(name) then
+        SelectMapOverride(name, false)
+    else
+        RejoinMatch()
+        repeat task.wait(9999) until false
+    end
+    repeat task.wait(1) until PlayerGui:FindFirstChild("ReactUniversalHotbar")
+    return true
+end
+
+function TDS:Map(name, autoReady, difficulty)
+    -- Supports Doc 2 recorder pattern: TDS:Map("MapName", true, "Hardcore")
+    if difficulty then
+        self.SavedDifficulty = difficulty
+    end
+    if GameState == "GAME" then
+        return self:GameInfo(name)
+    end
+    return true
+end
+
+function TDS:Skip(wave, time)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    RunVoteSkip()
+end
+
+function TDS:Place(TName, px, py, pz, wave, time, rx, ry, rz)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    if GameState ~= "GAME" then return false end
+    local rotation = CFrame.new()
+    if rx and ry and rz then
+        rotation = CFrame.fromEulerAnglesYXZ(rx, ry, rz)
+    end
+    local existing = {}
+    for _, child in ipairs(workspace.Towers:GetChildren()) do
+        for _, sub in ipairs(child:GetChildren()) do
+            if sub.Name == "Owner" and sub.Value == LocalPlayer.UserId then
+                existing[child] = true
+                break
+            end
+        end
+    end
+    DoPlaceTower(TName, Vector3.new(px, py, pz), rotation)
+    local NewT
+    repeat
+        for _, child in ipairs(workspace.Towers:GetChildren()) do
+            if not existing[child] then
+                for _, sub in ipairs(child:GetChildren()) do
+                    if sub.Name == "Owner" and sub.Value == LocalPlayer.UserId then
+                        NewT = child
+                        break
+                    end
+                end
+            end
+            if NewT then break end
+        end
+        task.wait(0.05)
+    until NewT
+    table.insert(self.PlacedTowers, NewT)
+    return #self.PlacedTowers
+end
+
+function TDS:Upgrade(idx, wave, time, PId)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    local t = self.PlacedTowers[idx]
+    if t then DoUpgradeTower(t, PId or 1) end
+end
+
+function TDS:Sell(idx, wave, time)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    local t = self.PlacedTowers[idx]
+    if t then DoSellTower(t) end
+end
+
+function TDS:SellAll(ReqWave)
+    task.spawn(function()
+        if ReqWave then
+            repeat task.wait(0.5) until GetCurrentWave() >= ReqWave
+        end
+        for _, t in ipairs(self.PlacedTowers) do
+            DoSellTower(t)
+        end
+        table.clear(self.PlacedTowers)
+    end)
+end
+
+function TDS:Target(idx, TargetType, wave, time)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    local t = self.PlacedTowers[idx]
+    if not t then return end
+    pcall(function()
+        RemoteFunc:InvokeServer("Troops", "Target", "Set", { Troop = t, Target = TargetType })
+    end)
+end
+
+TDS.SetTarget = TDS.Target
+
+function TDS:Ability(idx, AbilityName, wave, time, data, loop)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    local t = self.PlacedTowers[idx]
+    if not t then return false end
+    return DoActivateAbility(t, AbilityName, data)
+end
+
+function TDS:Option(idx, name, val, wave, time)
+    if type(wave) == "number" then
+        self:WaitForWave(wave)
+    end
+    local t = self.PlacedTowers[idx]
+    if t then DoSetOption(t, name, val) end
+end
+
+TDS.SetOption = TDS.Option
+
+function TDS:MedicSelect(idx, val)
+    local t = self.PlacedTowers[idx]
+    local target = self.PlacedTowers[val]
+    if t and target then
+        pcall(function()
+            RemoteFunc:InvokeServer("Troops", "TowerServerEvent", "ToggleSelectedTower", t, target)
+        end)
+        return true
+    end
+    return false
+end
+
+function TDS:VoteSkip(StartWave, EndWave)
+    task.spawn(function()
+        EndWave = EndWave or StartWave
+        for wave = StartWave, EndWave do
+            while GetCurrentWave() < wave do task.wait(1) end
+            local TargetNextWave = wave + 1
+            while GetCurrentWave() < TargetNextWave do
+                local VoteUi = PlayerGui:FindFirstChild("ReactOverridesVote")
+                local VoteButton = VoteUi
+                    and VoteUi:FindFirstChild("Frame")
+                    and VoteUi.Frame:FindFirstChild("votes")
+                    and VoteUi.Frame.votes:FindFirstChild("vote", true)
+                if VoteButton and VoteButton.Position == UDim2.new(0.5, 0, 0.5, 0) then
+                    pcall(function() RemoteFunc:InvokeServer("Voting", "Skip") end)
+                end
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+function TDS:UnlockTimeScale()
+    pcall(function()
+        RemoteFunc:InvokeServer("TicketsManager", "UnlockTimeScale")
+    end)
+end
+
+function TDS:TimeScale(val)
+    local SpeedList = {0, 0.5, 1, 1.5, 2}
+    local TargetIdx
+    for i, v in ipairs(SpeedList) do
+        if v == val then TargetIdx = i; break end
+    end
+    if not TargetIdx then return end
+    local SpeedLabel = PlayerGui.ReactUniversalHotbar.Frame.timescale.Speed
+    local CurrentVal = tonumber(SpeedLabel.Text:match("x([%d%.]+)"))
+    if not CurrentVal then return end
+    local CurrentIdx
+    for i, v in ipairs(SpeedList) do
+        if v == CurrentVal then CurrentIdx = i; break end
+    end
+    if not CurrentIdx then return end
+    local diff = TargetIdx - CurrentIdx
+    if diff < 0 then diff = #SpeedList + diff end
+    for _ = 1, diff do
+        RemoteFunc:InvokeServer("TicketsManager", "CycleTimeScale")
+        task.wait(0.5)
+    end
+end
+
+function TDS:StartGame()
+    pcall(function()
+        RemoteEvent:FireServer("LobbyVoting", "Ready")
+    end)
+end
+
+function TDS:RestartGame()
+    local network = ReplicatedStorage:WaitForChild("Network", 10)
+    local gameManager = network and network:WaitForChild("GameManager", 10)
+    local rematch = gameManager and gameManager:WaitForChild("RE:Rematch", 10)
+    if rematch then
+        pcall(function() rematch:FireServer() end)
+    end
+end
+
+function TDS:ResetAllStates()
+    table.clear(self.PlacedTowers)
+end
+
+shared.TDSTable = TDS
+
+return TDS                elseif CurrentMode == "Hardcore" then
                     payload = { mode = "hardcore", difficulty = "Easy", count = 1 }
                 elseif CurrentMode == "Voidcore" then
                     payload = { mode = "hardcore", difficulty = "Hard", count = 1 }
