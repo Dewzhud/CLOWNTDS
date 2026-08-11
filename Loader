@@ -1,7 +1,6 @@
--- // ==================== ADS MAP DETECT + MODE LOADER V3.2 ==================== //
--- ใช้เงื่อนไข Teleport ตาม API Document DuxiiT (v2:start payload)
--- Lobby: Teleport ตาม Mode → เข้าเกม → Detect แมพ+โหมด → โหลด Strat
--- รองรับ Modifiers / Private Server / Trial / Event Maps ตามเอกสาร API
+-- // ==================== ADS MAP DETECT + MODE LOADER V3.3 ==================== //
+-- เพิ่ม: Veto System + Auto Hop ถ้าไม่เจอแมพเป้าหมาย
+-- ใช้เงื่อนไข Teleport ตาม API Document DuxiiT
 
 local Config = getgenv().ADS_MultiMap
 if not Config then
@@ -28,6 +27,7 @@ local Logger = {
 -- // Game State
 local GameState = "UNKNOWN"
 local HasExecuted = false
+local IsHopping = false
 
 local function UpdateGameState()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
@@ -52,8 +52,146 @@ local function HttpGetSafe(url)
     return content
 end
 
--- // ==================== LOBBY TELEPORT SYSTEM (API COMPLIANT) ====================
--- ใช้ payload ตามเอกสาร API ของ DuxiiT โดยเฉพาะ v2:start
+-- // ==================== HOP & VETO SYSTEM ====================
+
+local function SmartTeleportToLobby()
+    if IsHopping then return end
+    IsHopping = true
+    local lobbyId = 3260590327
+    Logger:Log("Hopping back to lobby...")
+    pcall(function()
+        TeleportService:Teleport(lobbyId)
+    end)
+    task.wait(5)
+end
+
+local function GetIntermissionMapName()
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("SurfaceGui") and d.Name == "MapDisplay" then
+            local t = d:FindFirstChild("Title")
+            if t and t.Text ~= "" then
+                return t.Text
+            end
+        end
+    end
+    -- Fallback: State
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if state then
+        local mapVal = state:FindFirstChild("Map")
+        if mapVal then
+            local ok, val = pcall(function() return mapVal.Value end)
+            if ok and val ~= "" then return val end
+        end
+    end
+    return nil
+end
+
+local function CanVeto()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    local inter = pg:FindFirstChild("ReactGameIntermission")
+    if not inter then return false end
+    local frame = inter:FindFirstChild("Frame")
+    if not frame then return false end
+    local vetoBtn = frame:FindFirstChild("veto")
+    if not vetoBtn then return false end
+    local val = vetoBtn:FindFirstChild("value")
+    if not val then return false end
+    
+    local txt = val.Text
+    if txt:find("Veto") then
+        local current, total = txt:match("(%d+)/(%d+)")
+        if current and total then
+            local c, t = tonumber(current), tonumber(total)
+            if c and t and c < t then
+                return true
+            end
+        elseif txt == "Veto" then
+            return true -- ยังไม่มีตัวเลข แสดงว่ายังไม่ได้ใช้
+        end
+    end
+    return false
+end
+
+local function SendVeto()
+    pcall(function()
+        ReplicatedStorage:WaitForChild("RemoteEvent"):FireServer("LobbyVoting", "Veto")
+    end)
+    Logger:Log("Veto sent!")
+end
+
+local function IsTargetMap(currentMap, targetMap)
+    if not targetMap or targetMap == "" then return true end -- ไม่ได้ตั้ง = รับทั้งหมด
+    if currentMap == targetMap then return true end
+    if currentMap:lower() == targetMap:lower() then return true end
+    if currentMap:find(targetMap) or targetMap:find(currentMap) then return true end
+    if currentMap:gsub("%s+", ""):lower() == targetMap:gsub("%s+", ""):lower() then return true end
+    return false
+end
+
+-- รอ Intermission แล้วตรวจสอบแมพ
+local function ValidateMap()
+    local targetMap = Config.Lobby and Config.Lobby.TargetMap or nil
+    if not targetMap or targetMap == "" then
+        return true -- ไม่ได้ตั้ง TargetMap ไว้ = ข้ามการตรวจสอบ
+    end
+    
+    -- รอ Intermission UI (สูงสุด 60 วิ)
+    local startWait = os.clock()
+    repeat
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg and pg:FindFirstChild("ReactGameIntermission") then
+            break
+        end
+        task.wait(0.5)
+    until (os.clock() - startWait > 60)
+    
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg or not pg:FindFirstChild("ReactGameIntermission") then
+        Logger:Log("No intermission detected, proceeding...")
+        return true
+    end
+    
+    task.wait(2.5) -- รอแมพโหลด
+    
+    local currentMap = GetIntermissionMapName()
+    if not currentMap then
+        Logger:Log("Could not read map name")
+        return true
+    end
+    
+    Logger:Log("Intermission Map: " .. currentMap .. " | Target: " .. targetMap)
+    
+    if IsTargetMap(currentMap, targetMap) then
+        Logger:Log("Map match! ✓")
+        return true
+    end
+    
+    -- ไม่ตรง → ลอง Veto
+    Logger:Log("Map mismatch! Attempting veto...")
+    
+    if CanVeto() then
+        SendVeto()
+        task.wait(5) -- รอผล veto
+        
+        local newMap = GetIntermissionMapName()
+        if newMap and IsTargetMap(newMap, targetMap) then
+            Logger:Log("Veto success! New map: " .. newMap)
+            return true
+        else
+            Logger:Log("Veto did not give target map")
+        end
+    else
+        Logger:Log("Cannot veto (no charges or no veto button)")
+    end
+    
+    -- Veto ไม่สำเร็จ → Hop
+    Logger:Log("Hopping to retry...")
+    SmartTeleportToLobby()
+    return false
+end
+
+-- // ==================== LOBBY TELEPORT (API COMPLIANT) ====================
 
 local MatchmakingMap = {
     ["PizzaParty"] = "halloween",
@@ -71,43 +209,367 @@ local function CheckResOk(data)
     return false
 end
 
--- สร้าง payload ตามโหมด ตามเอกสาร API
 local function BuildPayload(mode)
     local mapped = MatchmakingMap[mode]
     
-    -- Hardcore / Voidcore ใช้ v2:start แบบ hardcore mode
     if mode == "Hardcore" then
-        return {
-            mode = "hardcore",
-            difficulty = "Easy",
-            count = 1
-        }
+        return { mode = "hardcore", difficulty = "Easy", count = 1 }
     elseif mode == "Voidcore" then
-        return {
-            mode = "hardcore",
-            difficulty = "Hard",
-            count = 1
-        }
-    -- Event Maps (มี mapped mode)
+        return { mode = "hardcore", difficulty = "Hard", count = 1 }
     elseif mapped then
-        local payload = {
-            mode = mapped,
-            count = 1
-        }
-        -- Ducky Event ต้องใส่ difficulty แยก
+        local payload = { mode = mapped, count = 1 }
         if mode:match("Ducky") then
             payload.difficulty = mode:gsub("Ducky", "")
         end
         return payload
-    -- Survival modes: Easy, Hard, Insane, Fallen ฯลฯ
     else
-        return {
-            difficulty = mode,
-            mode = "survival",
-            count = 1
-        }
+        return { difficulty = mode, mode = "survival", count = 1 }
     end
 end
+
+local function VoteModifiers()
+    local mods = Config.Lobby and Config.Lobby.Modifiers
+    if not mods or type(mods) ~= "table" or not next(mods) then return end
+    
+    Logger:Log("Voting modifiers...")
+    local BulkModifiers = ReplicatedStorage:WaitForChild("Network"):WaitForChild("Modifiers"):WaitForChild("RF:BulkVoteModifiers", 5)
+    local ModRep = ReplicatedStorage:WaitForChild("StateReplicators"):FindFirstChild("ModifierReplicator")
+    
+    local Available = {}
+    if ModRep then
+        local raw = ModRep:GetAttribute("Available")
+        if type(raw) == "string" then
+            local clean = raw:match("{.+}")
+            if clean then
+                pcall(function() Available = HttpService:JSONDecode(clean) end)
+            end
+        end
+    end
+    
+    local SelectedMods = {}
+    for k, v in pairs(mods) do
+        local modName = type(k) == "string" and k or v
+        if type(modName) == "string" then
+            if Available[modName] == true or next(Available) == nil then
+                SelectedMods[modName] = true
+            else
+                Logger:Log("Modifier locked: " .. modName)
+            end
+        end
+    end
+    
+    if next(SelectedMods) and BulkModifiers then
+        pcall(function()
+            BulkModifiers:InvokeServer(SelectedMods)
+            Logger:Log("Modifiers voted!")
+        end)
+    end
+end
+
+local function StartLobbyTeleport()
+    local lobbyConfig = Config.Lobby
+    if not lobbyConfig or not lobbyConfig.Mode then
+        Logger:Log("No Lobby.Mode set")
+        return false
+    end
+    
+    local mode = lobbyConfig.Mode
+    local privateCode = lobbyConfig.PrivateCode or ""
+    
+    Logger:Log("=================================")
+    Logger:Log("Lobby Mode: " .. tostring(mode))
+    if Config.Lobby.TargetMap and Config.Lobby.TargetMap ~= "" then
+        Logger:Log("Target Map: " .. Config.Lobby.TargetMap)
+    end
+    Logger:Log("=================================")
+    
+    -- Private Server
+    if privateCode ~= "" and not IsMobile then
+        if not MarketplaceService:UserOwnsGamePassAsync(LocalPlayer.UserId, 10518590) then
+            local rep = game:GetService('RobloxReplicatedStorage')
+            local ServerType = rep.GetServerType:InvokeServer()
+            if ServerType ~= "VIPServer" then
+                Logger:Log("Teleporting to private server...")
+                game:GetService("ExperienceService"):LaunchExperience({
+                    placeId = game.PlaceId,
+                    linkCode = tostring(privateCode)
+                })
+                return true
+            end
+        end
+    end
+    
+    -- Trial
+    if mode == "Trial" then
+        Logger:Log("Trial mode, finding elevator...")
+        local Elevators = workspace:WaitForChild("TrialElevators")
+        local Network = ReplicatedStorage:WaitForChild("Network")
+        if Elevators and Network then
+            local target = nil
+            repeat
+                for _, v in pairs(Elevators:GetChildren()) do
+                    if v.Name:match("Elevator") then target = v; break end
+                end
+                if not target then task.wait(0.5) end
+            until target
+            
+            task.spawn(function()
+                local net = Network:WaitForChild("Elevators")
+                pcall(function() net:WaitForChild("RF:Enter"):InvokeServer(target) end)
+                pcall(function() net:WaitForChild("RF:SetSize"):InvokeServer(1) end)
+                pcall(function() net:WaitForChild("RF:SetReady"):InvokeServer(true) end)
+            end)
+            return true
+        end
+    end
+    
+    -- Matchmaking v2:start
+    local LobbyHud = LocalPlayer.PlayerGui:WaitForChild("ReactLobbyHud", 30)
+    local frame = LobbyHud and LobbyHud:WaitForChild("Frame", 30)
+    local MatchMaking = frame and frame:WaitForChild("matchmaking", 30)
+    
+    if not MatchMaking then
+        Logger:Log("Matchmaking UI not found!"); return false
+    end
+    
+    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+    local success = false
+    
+    repeat
+        local ok, result = pcall(function()
+            local payload = BuildPayload(mode)
+            Logger:Log("v2:start | mode: " .. tostring(payload.mode) .. 
+                       (payload.difficulty and (" | diff: " .. payload.difficulty) or ""))
+            return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload)
+        end)
+        
+        if ok and CheckResOk(result) then
+            success = true
+            Logger:Log("Matchmaking started!")
+        else
+            task.wait(0.5)
+        end
+    until success
+    
+    if success and Config.Lobby.Modifiers and next(Config.Lobby.Modifiers) then
+        task.delay(3, VoteModifiers)
+    end
+    
+    return true
+end
+
+-- // ==================== IN-GAME DETECT ====================
+
+local function GetState(name)
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if not state then return nil end
+    local obj = state:FindFirstChild(name)
+    if obj then
+        local ok, val = pcall(function() return obj.Value end)
+        if ok then return val end
+    end
+    return nil
+end
+
+local function DetectMapAndMode()
+    local mapName = GetState("Map")
+    local difficulty = GetState("Difficulty")
+    local mode = GetState("Mode")
+    
+    if not mapName then
+        local mf = workspace:FindFirstChild("Map")
+        if mf then mapName = mf.Name end
+    end
+    
+    if not mapName then
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("SurfaceGui") and d.Name == "MapDisplay" then
+                local t = d:FindFirstChild("Title")
+                if t and t.Text ~= "" then mapName = t.Text; break end
+            end
+        end
+    end
+    
+    local finalMode = difficulty or mode or "Easy"
+    return mapName, finalMode
+end
+
+local function FindMap(detected)
+    if not detected then return nil, nil end
+    detected = tostring(detected):gsub("^%s+", ""):gsub("%s+$", "")
+    local maps = Config.Maps
+    if not maps then return nil, nil end
+    
+    for k, v in pairs(maps) do if k == detected then return k, v end end
+    local low = detected:lower()
+    for k, v in pairs(maps) do if k:lower() == low then return k, v end end
+    for k, v in pairs(maps) do if detected:find(k) or k:find(detected) then return k, v end end
+    for k, v in pairs(maps) do
+        if k:gsub("%s+", ""):lower() == detected:gsub("%s+", ""):lower() then return k, v end
+    end
+    return nil, nil
+end
+
+local function FindMode(mapData, detected)
+    if not mapData or not mapData.Modes then return nil, nil end
+    detected = tostring(detected or "Easy")
+    
+    for name, data in pairs(mapData.Modes) do
+        if name == detected then return name, data end
+    end
+    local low = detected:lower()
+    for name, data in pairs(mapData.Modes) do
+        if name:lower() == low then return name, data end
+    end
+    for name, data in pairs(mapData.Modes) do
+        if detected:find(name) or name:find(detected) then return name, data end
+    end
+    
+    local firstName, firstData = next(mapData.Modes)
+    if firstName then
+        Logger:Log("Mode '" .. detected .. "' not found, using: " .. firstName)
+        return firstName, firstData
+    end
+    return nil, nil
+end
+
+local function ExecuteStrat(mapKey, modeName, modeData)
+    if HasExecuted then return end
+    HasExecuted = true
+    
+    Logger:Log("=================================")
+    Logger:Log("Map: " .. tostring(mapKey))
+    Logger:Log("Mode: " .. tostring(modeName))
+    Logger:Log("URL: " .. tostring(modeData.URL))
+    Logger:Log("=================================")
+    
+    local url = modeData.URL
+    if not url or url == "" then
+        warn("[ADS Loader] No URL!"); return
+    end
+    
+    Logger:Log("Fetching strategy...")
+    local content = HttpGetSafe(url)
+    if not content then
+        warn("[ADS Loader] Failed to load!"); return
+    end
+    
+    Logger:Log("Executing...")
+    local func, err = loadstring(content)
+    if func then
+        local ok, res = pcall(func)
+        if ok then
+            Logger:Log("Strategy executed!")
+        else
+            warn("[ADS Loader] Runtime error: " .. tostring(res))
+        end
+    else
+        warn("[ADS Loader] Syntax error: " .. tostring(err))
+    end
+end
+
+local function AutoReady()
+    if not Config.Main.AutoReady then return end
+    task.spawn(function()
+        Logger:Log("AutoReady waiting...")
+        local reps = ReplicatedStorage:WaitForChild("StateReplicators")
+        local vote = reps:WaitForChild("VoteReplicator")
+        repeat task.wait(0.5)
+        until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
+        pcall(function()
+            ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting", "Skip")
+        end)
+        Logger:Log("AutoReady sent!")
+    end)
+end
+
+local function DetectAndExecute()
+    local dMap, dMode = DetectMapAndMode()
+    Logger:Log("Detect -> Map: " .. tostring(dMap) .. " | Mode: " .. tostring(dMode))
+    
+    local mk, md = FindMap(dMap)
+    if mk then
+        local modeN, modeD = FindMode(md, dMode)
+        if modeD then
+            ExecuteStrat(mk, modeN, modeD)
+        else
+            Logger:Log("Mode missing: " .. tostring(dMode))
+        end
+    else
+        Logger:Log("Map not in database: " .. tostring(dMap))
+    end
+end
+
+-- // ==================== MAIN FLOW ====================
+
+Logger:Log("ADS Loader V3.3 (Veto+Hop) | State: " .. GameState)
+
+if not Config.Maps then
+    warn("[ADS Loader] No Maps database!"); return
+end
+
+-- LOBBY: Teleport → Validate Map (Veto/Hop) → เข้าเกม → Detect
+if GameState == "LOBBY" then
+    if Config.Lobby and Config.Lobby.Mode then
+        
+        -- Loop จนกว่าจะได้แมพถูกต้อง (ถ้ามี TargetMap)
+        task.spawn(function()
+            while true do
+                if IsHopping then return end -- ถ้ากำลัง hop ให้หยุด (script จะรันใหม่เองใน lobby ใหม่)
+                
+                StartLobbyTeleport()
+                AutoReady()
+                
+                -- ถ้ามี TargetMap ให้รอ Intermission แล้วตรวจสอบ
+                local hasTarget = Config.Lobby.TargetMap and Config.Lobby.TargetMap ~= ""
+                if hasTarget then
+                    local valid = ValidateMap()
+                    if not valid then
+                        -- Hop แล้วรอจนกว่าจะกลับมา Lobby (script ใหม่จะจัดการ)
+                        Logger:Log("Waiting for hop...")
+                        return -- ออกจาก loop รอ script รันใหม่ใน lobby ใหม่
+                    end
+                    -- ผ่าน! รอเข้าเกม
+                end
+                
+                -- รอเข้าเกมจริง
+                local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                if pg then
+                    local conn
+                    conn = pg.ChildAdded:Connect(function(child)
+                        if child.Name == "ReactUniversalHotbar" and not HasExecuted then
+                            GameState = "GAME"
+                            Logger:Log("Game started! Detecting...")
+                            task.wait(2)
+                            DetectAndExecute()
+                            if conn then conn:Disconnect() end
+                        end
+                    end)
+                end
+                break -- ออกจาก loop รอเข้าเกม
+            end
+        end)
+        
+    else
+        Logger:Log("No Lobby.Mode, waiting for manual start...")
+        LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
+            if child.Name == "ReactUniversalHotbar" and not HasExecuted then
+                GameState = "GAME"
+                task.wait(2)
+                DetectAndExecute()
+            end
+        end)
+    end
+
+-- IN-GAME
+else
+    task.spawn(function()
+        task.wait(2)
+        DetectAndExecute()
+    end)
+end
+
+Logger:Log("Setup complete.")end
 
 -- Vote Modifiers (ถ้ามีใน Config)
 local function VoteModifiers()
