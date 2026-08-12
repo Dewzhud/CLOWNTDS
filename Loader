@@ -1,7 +1,5 @@
--- // ==================== ADS MINIMAL LOADER V3.6 ==================== //
--- รองรับ Config สองแบบ:
--- แบบที่ 1: ["Map"] = { Mode = "Easy", URL = "..." }
--- แบบที่ 2: ["Map"] = { ["Easy"] = { URL = "..." }, ["Hard"] = { URL = "..." } }
+-- // ==================== ADS LOADER V3.7 ==================== //
+-- Config ใส่ URL ธรรมดา Loader จะเอาไป loadstring(game:HttpGet(url))() เอง
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
@@ -21,16 +19,6 @@ local pg = LocalPlayer:FindFirstChild("PlayerGui")
 if pg then
     if pg:FindFirstChild("ReactLobbyHud") then GameState = "LOBBY"
     elseif pg:FindFirstChild("ReactUniversalHotbar") then GameState = "GAME" end
-end
-
--- // HttpGet
-local function get(url)
-    for i = 1, 10 do
-        local ok, res = pcall(function() return game:HttpGet(url) end)
-        if ok and type(res) == "string" and #res > 50 then return res end
-        task.wait(1)
-    end
-    return nil
 end
 
 -- // Payload Builder
@@ -90,14 +78,12 @@ local function getCurrentMode()
     return nil
 end
 
--- // Find Map (รองรับทั้งสองแบบ!)
+-- // Find Map (รองรับทั้งสองแบบ)
 local function findMapEntry(mapName, modeName)
     if not mapName then return nil, nil end
     
-    -- หา entry จากชื่อแมพ
     local entry = Config.Maps[mapName]
     
-    -- Fuzzy match ถ้าไม่เจอ exact
     if not entry then
         local low = mapName:lower()
         for k, v in pairs(Config.Maps) do
@@ -109,52 +95,59 @@ local function findMapEntry(mapName, modeName)
     
     if not entry then return nil, nil end
     
-    -- แบบที่ 1: ["Map"] = { Mode = "Easy", URL = "..." }
+    -- แบบที่ 1: { Mode = "Easy", URL = "..." }
     if entry.Mode and entry.URL then
         if not modeName or entry.Mode:lower() == modeName:lower() then
-            return entry, mapName
+            return entry.URL, mapName
         end
         return nil, nil
     end
     
-    -- แบบที่ 2: ["Map"] = { ["Easy"] = { URL = "..." }, ["Hard"] = { URL = "..." } }
+    -- แบบที่ 2: { ["Easy"] = { URL = "..." } }
     if modeName then
         local modeData = entry[modeName]
         if not modeData then
-            -- Fuzzy match mode
             local lowMode = modeName:lower()
             for k, v in pairs(entry) do
                 if k:lower() == lowMode then modeData = v; break end
             end
         end
         if modeData and modeData.URL then
-            -- คืนแบบเดียวกับแบบที่ 1 เพื่อให้ code ด้านล่างใช้ได้เลย
-            return { Mode = modeName, URL = modeData.URL }, mapName
+            return modeData.URL, mapName
         end
     else
-        -- ไม่มี modeName ใช้โหมดแรกที่เจอ
         local firstMode, firstData = next(entry)
         if firstData and firstData.URL then
-            return { Mode = firstMode, URL = firstData.URL }, mapName
+            return firstData.URL, mapName
         end
     end
     
     return nil, nil
 end
 
--- // Execute Strat
+-- // ==================== ตรงนี้ที่เปลี่ยน! ====================
+-- Loader เอา URL ไปใส่ loadstring(game:HttpGet(url))() เอง
 local function runStrat(url)
     if not url then return end
-    log("Loading strat...")
-    local code = get(url)
-    if not code then log("Failed to load strat"); return end
-    local f, e = loadstring(code)
-    if f then
-        local ok, r = pcall(f)
-        if ok then log("Strat running!") else log("Runtime error: " .. tostring(r)) end
-    else
-        log("Syntax error: " .. tostring(e))
+    log("Executing loadstring(game:HttpGet(...))")
+    
+    for i = 1, 10 do
+        -- 🔥 นี่คือส่วนที่ Loader เอา URL ไปใส่ loadstring เอง
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet(url))()
+        end)
+        
+        if ok then
+            log("Strat running!")
+            return true
+        else
+            log("Attempt " .. i .. "/10 failed: " .. tostring(err))
+            task.wait(1)
+        end
     end
+    
+    log("Failed after 10 attempts")
+    return false
 end
 
 -- // Auto Ready
@@ -184,7 +177,7 @@ local function startMatchmaking()
     until false
 end
 
--- // Validate: Loop ทุก 5 วิ → Veto → v2:start ใหม่ → Hop
+-- // Validate Loop
 local function validateAndRun()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if not pg then hop(); return end
@@ -200,14 +193,13 @@ local function validateAndRun()
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
-        local entry, matched = findMapEntry(mapName, modeName)
-        if entry then
-            runStrat(entry.URL)
+        local url, matched = findMapEntry(mapName, modeName)
+        if url then
+            runStrat(url)
         end
         return
     end
     
-    -- Intermission Loop
     local vetoSent = false
     local loopStart = os.clock()
     
@@ -218,12 +210,12 @@ local function validateAndRun()
         local modeName = getCurrentMode()
         log("Check -> " .. tostring(mapName) .. " | " .. tostring(modeName))
         
-        local entry, matched = findMapEntry(mapName, modeName)
-        if entry then
-            log("Match: " .. tostring(matched) .. " [" .. entry.Mode .. "]")
+        local url, matched = findMapEntry(mapName, modeName)
+        if url then
+            log("Match: " .. tostring(matched))
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(2)
-            runStrat(entry.URL)
+            runStrat(url)
             return
         end
         
@@ -273,183 +265,18 @@ if GameState == "LOBBY" then
 elseif GameState == "GAME" then
     local mapName = getCurrentMap()
     local modeName = getCurrentMode()
-    local entry, matched = findMapEntry(mapName, modeName)
-    if entry then
-        runStrat(entry.URL)
+    local url, matched = findMapEntry(mapName, modeName)
+    if url then
+        runStrat(url)
     else
         log("Not match. Vetoing...")
         local Event = game:GetService("ReplicatedStorage").RemoteEvent
         pcall(function() Event:FireServer("LobbyVoting", "Veto") end)
         task.wait(6)
         local newMap = getCurrentMap()
-        local newEntry, _ = findMapEntry(newMap, getCurrentMode())
-        if newEntry then
-            runStrat(newEntry.URL)
-            return
-        end
-        log("Restarting v2:start...")
-        local ok = pcall(function()
-            local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
-            return RemoteFunc:InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
-        end)
-        if not ok then hop() end
-    end
-
-else
-    pg.ChildAdded:Connect(function(child)
-        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
-            task.wait(1)
-            validateAndRun()
-        end
-    end)
-end
-
-log("Initialized")    if not url then return end
-    log("Loading strat...")
-    local code = get(url)
-    if not code then log("Failed to load strat"); return end
-    local f, e = loadstring(code)
-    if f then
-        local ok, r = pcall(f)
-        if ok then log("Strat running!") else log("Runtime error: " .. tostring(r)) end
-    else
-        log("Syntax error: " .. tostring(e))
-    end
-end
-
--- // Auto Ready
-local function autoReady()
-    task.spawn(function()
-        local reps = ReplicatedStorage:WaitForChild("StateReplicators")
-        local vote = reps:WaitForChild("VoteReplicator")
-        repeat task.wait(0.5)
-        until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
-        pcall(function() ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting", "Skip") end)
-        log("Ready sent")
-    end)
-end
-
--- // Matchmaking
-local function startMatchmaking()
-    log("Matchmaking: " .. Config.Mode)
-    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
-    local payload = buildPayload(Config.Mode)
-    repeat
-        local success, res = pcall(function() return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload) end)
-        if success and (res == true or (type(res) == "table" and res.Success == true) or (type(res) == "userdata")) then
-            log("Matchmaking OK")
-            break
-        end
-        task.wait(0.5)
-    until false
-end
-
--- // Validate: Loop ทุก 5 วิ → Veto → ถ้ายังไม่ใช่ → v2:start ใหม่
-local function validateAndRun()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then hop(); return end
-    
-    log("Waiting for intermission...")
-    local startT = os.clock()
-    repeat
-        if pg:FindFirstChild("ReactGameIntermission") then break end
-        if pg:FindFirstChild("ReactUniversalHotbar") then break end
-        task.wait(0.5)
-    until (os.clock() - startT > 60)
-    
-    -- ถ้าข้ามไปเกมเลย
-    if pg:FindFirstChild("ReactUniversalHotbar") then
-        local mapName = getCurrentMap()
-        local modeName = getCurrentMode()
-        local entry, matched = findMapEntry(mapName)
-        if entry and (not entry.Mode or not modeName or entry.Mode:lower() == modeName:lower()) then
-            runStrat(entry.URL)
-        end
-        return
-    end
-    
-    -- Intermission Loop ทุก 5 วิ
-    local vetoSent = false
-    local loopStart = os.clock()
-    
-    while true do
-        task.wait(5)
-        
-        local mapName = getCurrentMap()
-        local modeName = getCurrentMode()
-        log("Check -> " .. tostring(mapName) .. " | " .. tostring(modeName))
-        
-        local entry, matched = findMapEntry(mapName)
-        if entry and (not entry.Mode or not modeName or entry.Mode:lower() == modeName:lower()) then
-            log("Match: " .. tostring(matched))
-            -- รอเข้าเกมจริง
-            repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
-            task.wait(2)
-            runStrat(entry.URL)
-            return
-        end
-        
-        -- ไม่ใช่แมพที่ต้องการ
-        if not vetoSent then
-            log("Not match. Sending Veto...")
-            local Event = game:GetService("ReplicatedStorage").RemoteEvent
-            pcall(function() Event:FireServer("LobbyVoting", "Veto") end)
-            vetoSent = true
-        else
-            -- Veto ไปแล้วแต่ยังไม่ใช่ → กด v2:start ใหม่
-            log("Still not match. Restarting v2:start...")
-            local ok, res = pcall(function()
-                local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
-                return RemoteFunc:InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
-            end)
-            if ok and (res == true or (type(res) == "table" and res.Success == true) or (type(res) == "userdata")) then
-                log("v2:start OK. Waiting for new intermission...")
-                vetoSent = false -- รอ intermission ใหม่
-            else
-                log("v2:start failed. Hopping...")
-                hop()
-                return
-            end
-        end
-        
-        -- Timeout 60 วิใน intermission
-        if os.clock() - loopStart > 60 then
-            log("Timeout. Hopping...")
-            hop()
-            return
-        end
-    end
-end
-
--- // MAIN
-log("State: " .. GameState)
-
-if GameState == "LOBBY" then
-    startMatchmaking()
-    autoReady()
-    
-    pg.ChildAdded:Connect(function(child)
-        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
-            task.wait(1)
-            validateAndRun()
-        end
-    end)
-
-elseif GameState == "GAME" then
-    local mapName = getCurrentMap()
-    local modeName = getCurrentMode()
-    local entry, matched = findMapEntry(mapName)
-    if entry and (not entry.Mode or not modeName or entry.Mode:lower() == modeName:lower()) then
-        runStrat(entry.URL)
-    else
-        log("Not match. Vetoing...")
-        local Event = game:GetService("ReplicatedStorage").RemoteEvent
-        pcall(function() Event:FireServer("LobbyVoting", "Veto") end)
-        task.wait(6)
-        local newMap = getCurrentMap()
-        local newEntry, _ = findMapEntry(newMap)
-        if newEntry then
-            runStrat(newEntry.URL)
+        local newUrl, _ = findMapEntry(newMap, getCurrentMode())
+        if newUrl then
+            runStrat(newUrl)
             return
         end
         log("Restarting v2:start...")
