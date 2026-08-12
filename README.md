@@ -1,4 +1,5 @@
 **CLOWN TDS WE SUPPORT AETHER HUB!**
+
 our loader just teleport you to game mode that you set and find map that correct in ur config!
 
 copy this script
@@ -48,3 +49,4 @@ getgenv().ADS_Config = {
 -- ==================== LOADER ====================
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()
 ```
+# you can add same map name butt different mode too!
