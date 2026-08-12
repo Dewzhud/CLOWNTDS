@@ -1,0 +1,105 @@
+local TDS = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Library.lua"))()
+
+TDS:Loadout("Scout", "Sniper", "Demoman", "Boomerang", "None")
+TDS:Mode("Easy")
+TDS:GameInfo("Meltdown", {})
+
+TDS:Ready()
+
+-- [ Wave 1 ] --
+TDS:VoteSkip(1)
+TDS:Place("Boomerang", -11.605914115905762, 0.9999943375587463, -1.8549013137817383)
+
+-- [ Wave 2 ] --
+TDS:Upgrade(1)
+
+-- [ Wave 3 ] --
+TDS:VoteSkip(3)
+
+-- [ Wave 4 ] --
+TDS:Upgrade(1)
+TDS:VoteSkip(4)
+
+-- [ Wave 5 ] --
+TDS:Place("Boomerang", -6.308895587921143, 0.9999943375587463, -21.183900833129883)
+TDS:VoteSkip(5)
+TDS:Upgrade(2)
+
+-- [ Wave 6 ] --
+TDS:VoteSkip(6)
+TDS:Upgrade(2)
+
+-- [ Wave 7 ] --
+TDS:VoteSkip(7)
+
+-- [ Wave 8 ] --
+TDS:Place("Sniper", 6.769780158996582, 4.44645357131958, -8.624631881713867)
+TDS:Upgrade(3)
+TDS:Upgrade(3)
+TDS:VoteSkip(8)
+TDS:Upgrade(3)
+
+-- [ Wave 9 ] --
+TDS:VoteSkip(9)
+
+-- [ Wave 10 ] --
+TDS:VoteSkip(10)
+TDS:Upgrade(2)
+
+-- [ Wave 11 ] --
+TDS:VoteSkip(11)
+
+-- [ Wave 12 ] --
+TDS:Place("Sniper", -6.9251708984375, 4.249978065490723, 23.496633529663086)
+TDS:Upgrade(4)
+TDS:Upgrade(4)
+TDS:Upgrade(4)
+TDS:VoteSkip(12)
+
+-- [ Wave 13 ] --
+TDS:Upgrade(1)
+TDS:VoteSkip(13)
+
+-- [ Wave 14 ] --
+TDS:VoteSkip(14)
+
+-- [ Wave 15 ] --
+TDS:VoteSkip(15)
+TDS:Upgrade(1)
+
+-- [ Wave 16 ] --
+TDS:Place("Sniper", -25.81735610961914, 4.446385383605957, 5.404731273651123)
+TDS:Upgrade(5)
+TDS:Upgrade(5)
+TDS:Upgrade(5)
+TDS:VoteSkip(16)
+
+-- [ Wave 17 ] --
+TDS:Upgrade(2)
+TDS:VoteSkip(17)
+
+-- [ Wave 18 ] --
+TDS:Place("Sniper", -24.500873565673828, 4.446385383605957, 7.673462867736816)
+TDS:Upgrade(6)
+TDS:Upgrade(6)
+TDS:Upgrade(6)
+TDS:VoteSkip(18)
+
+-- [ Wave 19 ] --
+TDS:Upgrade(6)
+TDS:VoteSkip(19)
+
+-- [ Wave 20 ] --
+TDS:Upgrade(5)
+TDS:Upgrade(3)
+TDS:Place("Sniper", 8.62673568725586, 4.446385383605957, -10.435192108154297)
+TDS:Upgrade(7)
+TDS:Upgrade(7)
+TDS:Upgrade(7)
+TDS:Upgrade(7)
+TDS:Upgrade(4)
+TDS:Place("Sniper", -28.699628829956055, 4.446385383605957, 5.502734184265137)
+TDS:Upgrade(8)
+TDS:Upgrade(8)
+TDS:Upgrade(8)
+TDS:Upgrade(8)
