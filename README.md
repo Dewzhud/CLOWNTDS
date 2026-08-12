@@ -49,4 +49,4 @@ getgenv().ADS_Config = {
 -- ==================== LOADER ====================
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()
 ```
-# you can add same map name butt different mode too!
+# you can add same map name but different mode too!
