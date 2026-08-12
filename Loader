@@ -1,19 +1,242 @@
--- // ==================== ADS LOADER V3.7 ==================== //
--- Config ใส่ URL ธรรมดา Loader จะเอาไป loadstring(game:HttpGet(url))() เอง
+-- // ==================== ADS LOADER V6 (AUTO-SCAN) ==================== //
+-- ไม่ต้องใส่รายชื่อไฟล์! ใช้ GitHub API หรือ Directory Listing สแกนเอง
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
 if not Config.Mode then warn("[ADS] Config.Mode missing!"); return end
-if not Config.Maps then warn("[ADS] Config.Maps missing!"); return end
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local function log(msg) print("[ADS] " .. tostring(msg)) end
 
--- // Game State
+-- // ==================== AUTO FILE SCANNER ====================
+
+local SharedDB = {} -- { ["Map"] = { ["Mode"] = "URL" } }
+
+-- วิธีที่ 1: ใช้ GitHub API ดึงรายชื่อไฟล์ (แนะนำ)
+local function scanGitHubAPI()
+    local repo = Config.Repo or "Dewzhud/CLOWNTDS"
+    local branch = Config.Branch or "main"
+    local path = Config.Path or "Shared"
+    
+    local apiURL = "https://api.github.com/repos/" .. repo .. "/contents/" .. path .. "?ref=" .. branch
+    
+    log("Scanning GitHub API: " .. repo .. "/" .. path)
+    
+    local ok, res = pcall(function()
+        return game:HttpGet(apiURL, true) -- true = ใช้ headers ได้ (บาง executor)
+    end)
+    
+    if not ok or not res then
+        log("GitHub API failed, trying fallback...")
+        return false
+    end
+    
+    local data = HttpService:JSONDecode(res)
+    if type(data) ~= "table" then return false end
+    
+    local baseRawURL = "https://raw.githubusercontent.com/" .. repo .. "/" .. branch .. "/" .. path .. "/"
+    
+    for _, item in ipairs(data) do
+        if item.type == "file" and item.name:match("%.lua$") then
+            local url = baseRawURL .. item.name
+            log("Found: " .. item.name)
+            
+            -- โหลดไฟล์มาหา GameInfo
+            local code = nil
+            for i = 1, 3 do
+                local ok2, res2 = pcall(function() return game:HttpGet(url) end)
+                if ok2 and type(res2) == "string" and #res2 > 50 then
+                    code = res2
+                    break
+                end
+                task.wait(1)
+            end
+            
+            if code then
+                extractGameInfo(code, url)
+            end
+        end
+    end
+    
+    return true
+end
+
+-- วิธีที่ 2: ใช้ Directory Listing (ถ้า host รองรับ)
+local function scanDirectoryListing()
+    local baseURL = Config.BaseURL or ""
+    if baseURL == "" then return false end
+    
+    -- ลองหา index.html หรือ directory listing
+    local ok, res = pcall(function()
+        return game:HttpGet(baseURL)
+    end)
+    
+    if not ok or not res then return false end
+    
+    -- หา link ที่ลงท้ายด้วย .lua
+    local files = {}
+    for url in res:gmatch('href=["\']?([^"\'>%s]+%.lua)["\']?') do
+        table.insert(files, url)
+    end
+    
+    -- ถ้าไม่เจอลอง pattern อื่น
+    if #files == 0 then
+        for name in res:gmatch('([%w_%-]+%.lua)') do
+            table.insert(files, baseURL .. name)
+        end
+    end
+    
+    log("Found " .. #files .. " files via directory listing")
+    
+    for _, url in ipairs(files) do
+        -- ถ้าเป็น relative URL แปลงเป็น absolute
+        if url:sub(1, 4) ~= "http" then
+            url = baseURL .. url
+        end
+        
+        local code = nil
+        for i = 1, 3 do
+            local ok2, res2 = pcall(function() return game:HttpGet(url) end)
+            if ok2 and type(res2) == "string" and #res2 > 50 then
+                code = res2
+                break
+            end
+            task.wait(1)
+        end
+        
+        if code then
+            extractGameInfo(code, url)
+        end
+    end
+    
+    return #files > 0
+end
+
+-- วิธีที่ 3: ใช้ Raw GitHub ด้วย index (ลองเดาไฟล์ทั่วไป)
+local function scanCommonFiles()
+    local baseURL = Config.BaseURL or ""
+    if baseURL == "" then return false end
+    
+    if baseURL:sub(-1) ~= "/" then baseURL = baseURL .. "/" end
+    
+    local commonNames = {
+        "Easy", "Hard", "Insane", "Fallen", "Hardcore", "Voidcore",
+        "PizzaParty", "Badlands", "Polluted", "DuckyEasy", "DuckyHard",
+        "SummerCastle", "AutumnFalling", "WinterAbyss",
+        "AbyssalTrench", "LostValley", "CrystalCave",
+        -- เพิ่มได้เรื่อยๆ
+    }
+    
+    log("Trying common filenames...")
+    
+    for _, name in ipairs(commonNames) do
+        local url = baseURL .. name .. ".lua"
+        
+        local code = nil
+        for i = 1, 2 do
+            local ok, res = pcall(function() return game:HttpGet(url) end)
+            if ok and type(res) == "string" and #res > 100 then
+                code = res
+                break
+            end
+            task.wait(0.5)
+        end
+        
+        if code then
+            log("Found: " .. name .. ".lua")
+            extractGameInfo(code, url)
+        end
+    end
+    
+    return true
+end
+
+-- Extract GameInfo จาก code
+function extractGameInfo(code, url)
+    if not code then return end
+    
+    local patterns = {
+        'TDS:GameInfo%("([^"]+)",%s*"([^"]+)"%)',
+        "TDS:GameInfo%('([^']+)',%s*'([^']+)'%)",
+        'TDS:GameInfo%("([^"]+)",%s*\'([^\']+)\'%)',
+        "TDS:GameInfo%('([^']+)',%s*\"([^\"]+)\"%)",
+        -- รองรับแบบมีช่องว่างเพิ่มเติม
+        'TDS%s*:%s*GameInfo%s*%(%s*["\']?([^"\',]+)["\']?%s*,%s*["\']?([^"\',]+)["\']?%s*%)',
+    }
+    
+    for _, pattern in ipairs(patterns) do
+        local map, mode = code:match(pattern)
+        if map and mode then
+            map = map:gsub("^%s+", ""):gsub("%s+$", "")
+            mode = mode:gsub("^%s+", ""):gsub("%s+$", "")
+            
+            if not SharedDB[map] then SharedDB[map] = {} end
+            SharedDB[map][mode] = url
+            log("Registered: " .. map .. " [" .. mode .. "]")
+            return
+        end
+    end
+end
+
+-- // เริ่มสแกน
+local function initScanner()
+    -- ลองวิธีที่ 1: GitHub API
+    if Config.Repo then
+        if scanGitHubAPI() then return true end
+    end
+    
+    -- ลองวิธีที่ 2: Directory Listing
+    if scanDirectoryListing() then return true end
+    
+    -- ลองวิธีที่ 3: Common Files
+    if scanCommonFiles() then return true end
+    
+    -- Fallback: ใช้ Config.Maps ถ้ามี
+    if Config.Maps then
+        log("Using Config.Maps fallback")
+        for mapName, entry in pairs(Config.Maps) do
+            if entry.Mode and entry.URL then
+                if not SharedDB[mapName] then SharedDB[mapName] = {} end
+                SharedDB[mapName][entry.Mode] = entry.URL
+            elseif type(entry) == "table" then
+                for modeName, modeData in pairs(entry) do
+                    if type(modeData) == "table" and modeData.URL then
+                        if not SharedDB[mapName] then SharedDB[mapName] = {} end
+                        SharedDB[mapName][modeName] = modeData.URL
+                    end
+                end
+            end
+        end
+        return true
+    end
+    
+    return false
+end
+
+-- // เริ่มทำงาน
+if not initScanner() then
+    warn("[ADS] Failed to scan files!"); return
+end
+
+-- นับผล
+local mapCount, modeCount = 0, 0
+for map, modes in pairs(SharedDB) do
+    mapCount = mapCount + 1
+    for _ in pairs(modes) do modeCount = modeCount + 1 end
+end
+log("Database: " .. mapCount .. " maps, " .. modeCount .. " modes")
+
+if mapCount == 0 then
+    warn("[ADS] No strategies found!"); return
+end
+
+-- // ==================== REST คงเดิม ====================
+
 local GameState = "UNKNOWN"
 local pg = LocalPlayer:FindFirstChild("PlayerGui")
 if pg then
@@ -21,7 +244,6 @@ if pg then
     elseif pg:FindFirstChild("ReactUniversalHotbar") then GameState = "GAME" end
 end
 
--- // Payload Builder
 local MatchmakingMap = {
     PizzaParty = "halloween",
     Badlands = "badlands",
@@ -42,14 +264,12 @@ local function buildPayload(mode)
     end
 end
 
--- // Hop
 local function hop()
     log("Hopping...")
     pcall(function() TeleportService:Teleport(3260590327) end)
     task.wait(5)
 end
 
--- // Detect
 local function getCurrentMap()
     local state = ReplicatedStorage:FindFirstChild("State")
     if state then
@@ -78,61 +298,48 @@ local function getCurrentMode()
     return nil
 end
 
--- // Find Map (รองรับทั้งสองแบบ)
-local function findMapEntry(mapName, modeName)
-    if not mapName then return nil, nil end
+local function findInShared(mapName, modeName)
+    if not mapName then return nil end
     
-    local entry = Config.Maps[mapName]
+    local modes = SharedDB[mapName]
     
-    if not entry then
+    if not modes then
         local low = mapName:lower()
-        for k, v in pairs(Config.Maps) do
-            if k:lower() == low then entry = v; mapName = k; break end
-            if mapName:find(k) or k:find(mapName) then entry = v; mapName = k; break end
-            if mapName:gsub("%s+", ""):lower() == k:gsub("%s+", ""):lower() then entry = v; mapName = k; break end
+        for k, v in pairs(SharedDB) do
+            if k:lower() == low then modes = v; break end
+            if mapName:find(k) or k:find(mapName) then modes = v; break end
+            if mapName:gsub("%s+", ""):lower() == k:gsub("%s+", ""):lower() then modes = v; break end
         end
     end
     
-    if not entry then return nil, nil end
+    if not modes then return nil end
     
-    -- แบบที่ 1: { Mode = "Easy", URL = "..." }
-    if entry.Mode and entry.URL then
-        if not modeName or entry.Mode:lower() == modeName:lower() then
-            return entry.URL, mapName
-        end
-        return nil, nil
-    end
+    modeName = modeName or Config.Mode
+    local url = modes[modeName]
     
-    -- แบบที่ 2: { ["Easy"] = { URL = "..." } }
-    if modeName then
-        local modeData = entry[modeName]
-        if not modeData then
-            local lowMode = modeName:lower()
-            for k, v in pairs(entry) do
-                if k:lower() == lowMode then modeData = v; break end
-            end
-        end
-        if modeData and modeData.URL then
-            return modeData.URL, mapName
-        end
-    else
-        local firstMode, firstData = next(entry)
-        if firstData and firstData.URL then
-            return firstData.URL, mapName
+    if not url then
+        local lowMode = modeName:lower()
+        for k, v in pairs(modes) do
+            if k:lower() == lowMode then url = v; break end
         end
     end
     
-    return nil, nil
+    if not url then
+        local firstMode, firstUrl = next(modes)
+        if firstUrl then
+            log("Mode '" .. modeName .. "' not found, using: " .. firstMode)
+            url = firstUrl
+        end
+    end
+    
+    return url
 end
 
--- // ==================== ตรงนี้ที่เปลี่ยน! ====================
--- Loader เอา URL ไปใส่ loadstring(game:HttpGet(url))() เอง
 local function runStrat(url)
     if not url then return end
-    log("Executing loadstring(game:HttpGet(...))")
+    log("Executing: " .. url)
     
     for i = 1, 10 do
-        -- 🔥 นี่คือส่วนที่ Loader เอา URL ไปใส่ loadstring เอง
         local ok, err = pcall(function()
             loadstring(game:HttpGet(url))()
         end)
@@ -150,7 +357,6 @@ local function runStrat(url)
     return false
 end
 
--- // Auto Ready
 local function autoReady()
     task.spawn(function()
         local reps = ReplicatedStorage:WaitForChild("StateReplicators")
@@ -162,7 +368,6 @@ local function autoReady()
     end)
 end
 
--- // Matchmaking
 local function startMatchmaking()
     log("Matchmaking: " .. Config.Mode)
     local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
@@ -177,7 +382,6 @@ local function startMatchmaking()
     until false
 end
 
--- // Validate Loop
 local function validateAndRun()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if not pg then hop(); return end
@@ -193,10 +397,8 @@ local function validateAndRun()
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
-        local url, matched = findMapEntry(mapName, modeName)
-        if url then
-            runStrat(url)
-        end
+        local url = findInShared(mapName, modeName)
+        if url then runStrat(url) end
         return
     end
     
@@ -210,9 +412,9 @@ local function validateAndRun()
         local modeName = getCurrentMode()
         log("Check -> " .. tostring(mapName) .. " | " .. tostring(modeName))
         
-        local url, matched = findMapEntry(mapName, modeName)
+        local url = findInShared(mapName, modeName)
         if url then
-            log("Match: " .. tostring(matched))
+            log("Match found!")
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(2)
             runStrat(url)
@@ -265,7 +467,7 @@ if GameState == "LOBBY" then
 elseif GameState == "GAME" then
     local mapName = getCurrentMap()
     local modeName = getCurrentMode()
-    local url, matched = findMapEntry(mapName, modeName)
+    local url = findInShared(mapName, modeName)
     if url then
         runStrat(url)
     else
@@ -274,7 +476,7 @@ elseif GameState == "GAME" then
         pcall(function() Event:FireServer("LobbyVoting", "Veto") end)
         task.wait(6)
         local newMap = getCurrentMap()
-        local newUrl, _ = findMapEntry(newMap, getCurrentMode())
+        local newUrl = findInShared(newMap, getCurrentMode())
         if newUrl then
             runStrat(newUrl)
             return
