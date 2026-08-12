@@ -9,7 +9,7 @@ getgenv().ADS_Config = {
     Mode = "Easy",
     
     
-    BaseURL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Shared/Strat/",
+    BaseURL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Strat/",
     
 
 }
