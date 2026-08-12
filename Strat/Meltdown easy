@@ -1,6 +1,6 @@
 local TDS = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Library.lua"))()
 
-TDS:Loadout("none", "Sniper", "none", "Boomerang", "None")
+TDS:Loadout("none", "Sniper", "None", "Boomerang", "None")
 TDS:Mode("Easy")
 TDS:GameInfo("Meltdown", {})
 
