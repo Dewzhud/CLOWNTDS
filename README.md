@@ -6,47 +6,14 @@ copy this script
 
 ```
 getgenv().ADS_Config = {
-    -- MODE (Easy, Hard, Insane, Fallen, Hardcore, Voidcore, PizzaParty, Badlands, PollutedWasteland, DuckyEasy, DuckyHard, Trial)
     Mode = "Easy",
     
-    -- แมพที่รองรับ: ชื่อแมพ = { Mode=โหมดที่ detect ได้, URL=strat }
-    Maps = {
-        ["Meltdown"] = {
-            Mode = "Easy",
-            URL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Strat/Meltdown%20easy"
-        },
-        ["Pizza Party"] = {
-            Mode = "Hard",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/PizzaParty.lua"
-        },
-        ["Badlands II"] = {
-            Mode = "Hard",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Badlands.lua"
-        },
-        ["Polluted Wasteland II"] = {
-            Mode = "Hard",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Polluted.lua"
-        },
-        ["Ducky Revenge"] = {
-            Mode = "Easy",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/DuckyEasy.lua"
-        },
-        ["Fallen Mode"] = {
-            Mode = "Fallen",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Fallen.lua"
-        },
-        ["Hardcore Mode"] = {
-            Mode = "Hardcore",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Hardcore.lua"
-        },
-        ["Voidcore"] = {
-            Mode = "Voidcore",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Voidcore.lua"
-        },
-    }
+    
+    BaseURL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Shared/Strat/",
+    
+
 }
 
--- ==================== LOADER ====================
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Loader.lua"))()
 ```
 # you can add same map name but different mode too!
