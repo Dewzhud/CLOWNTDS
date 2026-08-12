@@ -3,7 +3,8 @@ our loader just teleport you to game mode that you set and find map that correct
 
 copy this script
 
-``` getgenv().ADS_Config = {
+```
+getgenv().ADS_Config = {
     -- โหมดที่จะกดหาใน Lobby (Easy, Hard, Insane, Fallen, Hardcore, Voidcore, PizzaParty, Badlands, PollutedWasteland, DuckyEasy, DuckyHard, Trial)
     Mode = "Easy",
     
@@ -45,4 +46,5 @@ copy this script
 }
 
 -- ==================== LOADER ====================
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()```
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()
+```
