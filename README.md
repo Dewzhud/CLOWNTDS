@@ -6,14 +6,14 @@ copy this script
 
 ```
 getgenv().ADS_Config = {
-    -- โหมดที่จะกดหาใน Lobby (Easy, Hard, Insane, Fallen, Hardcore, Voidcore, PizzaParty, Badlands, PollutedWasteland, DuckyEasy, DuckyHard, Trial)
+    -- MODE (Easy, Hard, Insane, Fallen, Hardcore, Voidcore, PizzaParty, Badlands, PollutedWasteland, DuckyEasy, DuckyHard, Trial)
     Mode = "Easy",
     
     -- แมพที่รองรับ: ชื่อแมพ = { Mode=โหมดที่ detect ได้, URL=strat }
     Maps = {
-        ["Summer Castle"] = {
+        ["Meltdown"] = {
             Mode = "Easy",
-            URL = "https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Strategies/Easy.lua"
+            URL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Strat/Meltdown%20easy"
         },
         ["Pizza Party"] = {
             Mode = "Hard",
