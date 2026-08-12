@@ -1,5 +1,5 @@
--- // ==================== ADS MINIMAL LOADER (Veto + Hop) ==================== //
--- Config ที่ต้องการ: getgenv().ADS_Config = { Mode = "Easy", Maps = { ["Map"] = {Mode="...", URL="..."} } }
+-- // ==================== ADS MINIMAL LOADER (Veto → Hop) ==================== //
+-- Config: getgenv().ADS_Config = { Mode = "Easy", Maps = { ["Map"] = {Mode="...", URL="..."} } }
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
@@ -31,7 +31,7 @@ local function get(url)
     return nil
 end
 
--- // Payload Builder (ตาม API DuxiiT)
+-- // Payload Builder
 local MatchmakingMap = {
     PizzaParty = "halloween",
     Badlands = "badlands",
@@ -52,14 +52,14 @@ local function buildPayload(mode)
     end
 end
 
--- // Teleport / Hop
+-- // Hop
 local function hop()
-    log("Hopping to lobby...")
+    log("Hopping...")
     pcall(function() TeleportService:Teleport(3260590327) end)
     task.wait(5)
 end
 
--- // Detect Map & Mode
+-- // Detect
 local function getCurrentMap()
     local state = ReplicatedStorage:FindFirstChild("State")
     if state then
@@ -88,7 +88,24 @@ local function getCurrentMode()
     return nil
 end
 
--- // Veto System
+-- // Find Map
+local function findMapEntry(mapName)
+    if not mapName then return nil, nil end
+    if Config.Maps[mapName] then return Config.Maps[mapName], mapName end
+    local low = mapName:lower()
+    for k, v in pairs(Config.Maps) do
+        if k:lower() == low then return v, k end
+    end
+    for k, v in pairs(Config.Maps) do
+        if mapName:find(k) or k:find(mapName) then return v, k end
+    end
+    for k, v in pairs(Config.Maps) do
+        if mapName:gsub("%s+", ""):lower() == k:gsub("%s+", ""):lower() then return v, k end
+    end
+    return nil, nil
+end
+
+-- // Veto
 local function canVeto()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if not pg then return false end
@@ -108,6 +125,167 @@ local function canVeto()
             if c and t and c < t then return true end
         elseif txt == "Veto" then return true end
     end
+    return false
+end
+
+local function sendVeto()
+    pcall(function() ReplicatedStorage:WaitForChild("RemoteEvent"):FireServer("LobbyVoting", "Veto") end)
+    log("Veto sent")
+end
+
+-- // Execute Strat
+local function runStrat(url)
+    if not url then return end
+    log("Loading strat...")
+    local code = get(url)
+    if not code then log("Failed to load strat"); return end
+    local f, e = loadstring(code)
+    if f then
+        local ok, r = pcall(f)
+        if ok then log("Strat running!") else log("Runtime error: " .. tostring(r)) end
+    else
+        log("Syntax error: " .. tostring(e))
+    end
+end
+
+-- // Auto Ready
+local function autoReady()
+    task.spawn(function()
+        local reps = ReplicatedStorage:WaitForChild("StateReplicators")
+        local vote = reps:WaitForChild("VoteReplicator")
+        repeat task.wait(0.5)
+        until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
+        pcall(function() ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting", "Skip") end)
+        log("Ready sent")
+    end)
+end
+
+-- // Matchmaking
+local function startMatchmaking()
+    log("Matchmaking: " .. Config.Mode)
+    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+    local payload = buildPayload(Config.Mode)
+    repeat
+        local success, res = pcall(function() return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload) end)
+        if success and (res == true or (type(res) == "table" and res.Success == true) or (type(res) == "userdata")) then
+            log("Matchmaking OK")
+            break
+        end
+        task.wait(0.5)
+    until false
+end
+
+-- // Validate: ถ้าไม่ใช่แมพที่ต้องการ → Veto 1 รอบ → ถ้ายังไม่ใช่ → Hop
+local function validateAndRun()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then hop(); return end
+    
+    log("Waiting for intermission...")
+    local startT = os.clock()
+    repeat
+        if pg:FindFirstChild("ReactGameIntermission") then break end
+        if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        task.wait(0.5)
+    until (os.clock() - startT > 30)
+    
+    task.wait(2.5)
+    
+    local mapName = getCurrentMap()
+    local modeName = getCurrentMode()
+    log("Detected: " .. tostring(mapName) .. " | " .. tostring(modeName))
+    
+    local entry, matchedName = findMapEntry(mapName)
+    
+    -- ถ้าเจอแมพที่ตรง + โหมดตรง → เข้าเกมเลย
+    if entry and (not entry.Mode or not modeName or entry.Mode:lower() == modeName:lower()) then
+        log("Match: " .. tostring(matchedName))
+        if not pg:FindFirstChild("ReactUniversalHotbar") then
+            repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+        end
+        task.wait(2)
+        runStrat(entry.URL)
+        return
+    end
+    
+    -- ไม่ใช่แมพที่ต้องการ → Veto 1 รอบ
+    log("Not target. Vetoing...")
+    
+    if canVeto() then
+        sendVeto()
+        task.wait(6)
+        
+        local newMap = getCurrentMap()
+        local newMode = getCurrentMode()
+        log("After veto: " .. tostring(newMap) .. " | " .. tostring(newMode))
+        
+        local newEntry, newMatched = findMapEntry(newMap)
+        if newEntry and (not newEntry.Mode or not newMode or newEntry.Mode:lower() == newMode:lower()) then
+            log("Veto success: " .. tostring(newMatched))
+            if not pg:FindFirstChild("ReactUniversalHotbar") then
+                repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+            end
+            task.wait(2)
+            runStrat(newEntry.URL)
+            return
+        end
+        
+        log("Veto failed.")
+    else
+        log("Cannot veto.")
+    end
+    
+    -- ไม่สำเร็จ → Hop
+    hop()
+end
+
+-- // MAIN
+log("State: " .. GameState)
+
+if GameState == "LOBBY" then
+    startMatchmaking()
+    autoReady()
+    
+    pg.ChildAdded:Connect(function(child)
+        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
+            task.wait(1)
+            validateAndRun()
+        end
+    end)
+
+elseif GameState == "GAME" then
+    -- ถ้ารันในเกมอยู่แล้ว ก็ตรวจสอบเหมือนกัน
+    local mapName = getCurrentMap()
+    local modeName = getCurrentMode()
+    local entry, matched = findMapEntry(mapName)
+    
+    if entry and (not entry.Mode or not modeName or entry.Mode:lower() == modeName:lower()) then
+        runStrat(entry.URL)
+    else
+        -- ไม่ใช่แมพเป้าหมาย → ลอง Veto ถ้าได้ ถ้าไม่ได้ก็ Hop
+        log("Not target map.")
+        if canVeto() then
+            sendVeto()
+            task.wait(6)
+            local newMap = getCurrentMap()
+            local newEntry, _ = findMapEntry(newMap)
+            if newEntry then
+                runStrat(newEntry.URL)
+                return
+            end
+        end
+        hop()
+    end
+
+else
+    pg.ChildAdded:Connect(function(child)
+        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
+            task.wait(1)
+            validateAndRun()
+        end
+    end)
+end
+
+log("Initialized")    end
     return false
 end
 
