@@ -9,9 +9,6 @@ playback strat By **Aether Hub**
 getgenv().ADS_Config = {
     Repo = "Dewzhud/CLOWNTDS",
     Branch = "main",
-    BuyConfigURL     = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Buycfg.lua",
-    FarmPollInterval = 30,  -- เช็คเงินทุก 30 วินาที (optional, default 30)
-
     Mode = "Easy"
 }
 
