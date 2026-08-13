@@ -332,7 +332,7 @@ local function validateAndRun()
     local loopStart = os.clock()
     
     while true do
-        task.wait(5)
+        task.wait()
         
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
@@ -342,7 +342,7 @@ local function validateAndRun()
         if url then
             log("Match found!")
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
-            task.wait(2)
+            task.wait(.5)
             runStrat(url)
             return
         end
