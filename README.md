@@ -1,9 +1,10 @@
-**CLOWN TDS WE SUPPORT AETHER HUB!**
+**CLOWN TDS **
 
-our loader just teleport you to game mode that you set and find map that correct in ur config!
+our loader just teleport you to game mode that you set and find map that correct !
 
 copy this script
 
+playback strat By **Aether HUB**
 ```
 getgenv().ADS_Config = {
     Mode = "Easy",
