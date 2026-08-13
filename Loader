@@ -3,7 +3,7 @@ getgenv().ADS_Config = {
     Repo = "Dewzhud/CLOWNTDS",
     Branch = "main", 
     Path = "Shared/Strat",
-    BaseURL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Shared/Strat/",
+    BaseURL = "https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Strat/",
     AutoScan = true,
 }
 
