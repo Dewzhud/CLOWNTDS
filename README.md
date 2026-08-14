@@ -1,7 +1,10 @@
 # CLOWN TDS 
+my script just teleport you too the game and run strat
 
-our loader just teleport you to game mode that you set and find map that correct !
+- no skill tree
+- no modifier
 
+  
 copy this script
 
 playback strat By **Aether Hub**
