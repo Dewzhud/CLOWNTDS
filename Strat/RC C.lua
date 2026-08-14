@@ -1,6 +1,6 @@
 local TDS = loadstring(game:HttpGet("https://raw.githubusercontent.com/DuxiiT/auto-strat/refs/heads/main/Library.lua"))()
 
-TDS:Loadout("Sniper", "Boomerang", "Farm", "Shotgunner", "Slime Trooper")
+TDS:Loadout("Sniper", "Boomerang", "", "", "")
 TDS:Mode("Casual")
 TDS:GameInfo("Retro Crossroads", {})
 
