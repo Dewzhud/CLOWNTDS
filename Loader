@@ -1,112 +1,638 @@
 -- // ==================== ADS LOADER V8 (SCAN ALL FILES) ==================== //
--- ไล่ทุกไฟล์ .lua ใน Repo ไม่สนชื่อไฟล์ แล้วดึง TDS:Mode + TDS:GameInfo("Map") จากแต่ละไฟล์
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
 
-local Players = game:GetService("Players")
+local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local TeleportService   = game:GetService("TeleportService")
+local HttpService       = game:GetService("HttpService")
+local LocalPlayer       = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local function log(msg) print("[ADS] " .. tostring(msg)) end
 
--- // ==================== SCANNER (ALL FILES) ====================
+-- // ==================== SCANNER ====================
 
-local SharedDB = {} -- { ["Map"] = { ["Mode"] = "URL" } }
+local SharedDB = {}
 
-function extractFromCode(code, url)
+local function extractFromCode(code, url)
     if not code or type(code) ~= "string" then return false end
-    
-    -- หา TDS:Mode("...") หรือ TDS:Mode('...') หรือ TDS.Mode(...)
-    local mode = nil
-    local modePatterns = {
+
+    local mode
+    for _, p in ipairs({
         'TDS%s*[:%.]%s*Mode%s*%(%s*["\']([^"\']+)["\']%s*%)',
         'TDS%["Mode"%]%s*%(%s*["\']([^"\']+)["\']%s*%)',
         'TDS%[\'Mode\'%]%s*%(%s*["\']([^"\']+)["\']%s*%)',
-        'Mode%s*=%s*["\']([^"\']+)["\']', -- fallback ถ้าเขียนแบบตัวแปร
-    }
-    for _, p in ipairs(modePatterns) do
-        mode = code:match(p)
-        if mode then break end
-    end
-    
-    -- หา TDS:GameInfo("Map", {...}) หรือ TDS.GameInfo("Map", ...)
-    local map = nil
-    local mapPatterns = {
+        'Mode%s*=%s*["\']([^"\']+)["\']',
+    }) do mode = code:match(p); if mode then break end end
+
+    local map
+    for _, p in ipairs({
         'TDS%s*[:%.]%s*GameInfo%s*%(%s*["\']([^"\']+)["\']%s*,',
         'TDS%["GameInfo"%]%s*%(%s*["\']([^"\']+)["\']%s*,',
         'TDS%[\'GameInfo\'%]%s*%(%s*["\']([^"\']+)["\']%s*,',
-        'GameInfo%s*%(%s*["\']([^"\']+)["\']%s*,', -- fallback
-    }
-    for _, p in ipairs(mapPatterns) do
-        map = code:match(p)
-        if map then break end
-    end
-    
-    -- ถ้าไม่เจอ GameInfo("Map") ลองหา Map จากตัวแปรอื่นๆ
+        'GameInfo%s*%(%s*["\']([^"\']+)["\']%s*,',
+    }) do map = code:match(p); if map then break end end
+
     if not map then
-        local altMapPatterns = {
+        for _, p in ipairs({
             'Map%s*=%s*["\']([^"\']+)["\']',
             'map%s*=%s*["\']([^"\']+)["\']',
             '["\']?map["\']?%s*:%s*["\']([^"\']+)["\']',
-        }
-        for _, p in ipairs(altMapPatterns) do
-            map = code:match(p)
-            if map then break end
-        end
+        }) do map = code:match(p); if map then break end end
     end
-    
+
     if map and mode then
-        map = map:gsub("^%s+", ""):gsub("%s+$", "")
-        mode = mode:gsub("^%s+", ""):gsub("%s+$", "")
-        
+        map  = map:gsub("^%s+",""):gsub("%s+$","")
+        mode = mode:gsub("^%s+",""):gsub("%s+$","")
         if not SharedDB[map] then SharedDB[map] = {} end
         SharedDB[map][mode] = url
-        log("Registered: " .. map .. " [" .. mode .. "] -> " .. url:match("([^/]+)$"))
+        log("Registered: "..map.." ["..mode.."] -> "..url:match("([^/]+)$"))
         return true
     end
-    
     return false
 end
 
--- // ดึงไฟล์ทั้งหมดแบบ Recursive จาก GitHub API
 local function fetchGitHubContents(repo, path, branch, baseURL)
     local items = {}
-    local apiURL = "https://api.github.com/repos/" .. repo .. "/contents/" .. (path or "") .. "?ref=" .. (branch or "main")
-    
+    local apiURL = "https://api.github.com/repos/"..repo.."/contents/"..(path or "").."?ref="..(branch or "main")
     local ok, res = pcall(function() return game:HttpGet(apiURL) end)
     if not ok or not res then return items end
-    
-    local data
-    ok, data = pcall(function() return HttpService:JSONDecode(res) end)
+    local data; ok, data = pcall(function() return HttpService:JSONDecode(res) end)
     if not ok or type(data) ~= "table" then return items end
-    
     for _, item in ipairs(data) do
         if item.type == "file" and item.name:match("%.lua$") then
-            local fileURL = baseURL .. (path and (path .. "/") or "") .. item.name
-            fileURL = fileURL:gsub("/+", "/"):gsub(":/", "://") -- fix double slash
-            table.insert(items, fileURL)
+            local u = baseURL..(path and (path.."/") or "")..item.name
+            table.insert(items, u:gsub("/+","/"):gsub(":/","://"))
         elseif item.type == "dir" then
-            -- Recursive scan subfolder
-            local subPath = (path and (path .. "/") or "") .. item.name
-            local subItems = fetchGitHubContents(repo, subPath, branch, baseURL)
-            for _, subURL in ipairs(subItems) do
-                table.insert(items, subURL)
+            local sub = (path and (path.."/") or "")..item.name
+            for _, su in ipairs(fetchGitHubContents(repo, sub, branch, baseURL)) do
+                table.insert(items, su)
             end
         end
     end
-    
     return items
 end
 
--- // สแกนไฟล์ทุกไฟล์
 local function scanFiles()
     local baseURL = Config.BaseURL or ""
-    
     if baseURL == "" and Config.Repo then
-        baseURL = "https://raw.githubusercontent.com/" .. Config.Repo .. "/" .. (Config.Branch or "main") .. "/"
+        baseURL = "https://raw.githubusercontent.com/"..Config.Repo.."/"
+            ..(Config.Branch or "main").."/"
+        if Config.Path and Config.Path ~= "" then baseURL = baseURL..Config.Path.."/" end
+    end
+    if baseURL == "" then warn("[ADS] No BaseURL or Repo!"); return false end
+    if baseURL:sub(-1) ~= "/" then baseURL = baseURL.."/" end
+    log("Scanning: "..baseURL)
+    local fileURLs = {}
+    if Config.Repo then
+        fileURLs = fetchGitHubContents(Config.Repo, Config.Path or "", Config.Branch or "main", baseURL)
+        log("Found "..#fileURLs.." .lua files")
+    end
+    if #fileURLs == 0 then warn("[ADS] No files found!"); return false end
+    for _, fileURL in ipairs(fileURLs) do
+        local code
+        for i = 1, 3 do
+            local ok, res = pcall(function() return game:HttpGet(fileURL) end)
+            if ok and type(res) == "string" and #res > 50 then code = res; break end
+            task.wait(1)
+        end
+        if code then extractFromCode(code, fileURL) end
+    end
+    return true
+end
+
+-- // ==================== PLAYER STATS ====================
+
+local function getPlayerStats()
+    local level, coins = 0, 0
+    local ok, val
+    ok, val = pcall(function() return LocalPlayer.Level end)
+    if ok and type(val) == "number" then level = val
+    else
+        local ls = LocalPlayer:FindFirstChild("leaderstats")
+        if ls then
+            local lv = ls:FindFirstChild("Level") or ls:FindFirstChild("level")
+            if lv then level = lv.Value or 0 end
+        end
+    end
+    ok, val = pcall(function() return LocalPlayer.Coins end)
+    if ok and type(val) == "number" then coins = val
+    else
+        local ls = LocalPlayer:FindFirstChild("leaderstats")
+        if ls then
+            local co = ls:FindFirstChild("Coins") or ls:FindFirstChild("coins")
+            if co then coins = co.Value or 0 end
+        end
+    end
+    return level, coins
+end
+
+local function getOwnedTowers()
+    local owned = {}
+    local playerData = ReplicatedStorage:FindFirstChild("PlayerData")
+        or ReplicatedStorage:FindFirstChild("Data")
+    if playerData then
+        local pd = playerData:FindFirstChild(tostring(LocalPlayer.UserId))
+            or playerData:FindFirstChild(LocalPlayer.Name)
+        if pd then
+            local tf = pd:FindFirstChild("Towers")
+                or pd:FindFirstChild("OwnedTowers")
+                or pd:FindFirstChild("Loadout")
+            if tf then for _, v in ipairs(tf:GetChildren()) do owned[v.Name] = true end end
+        end
+    end
+    for attrName in pairs(LocalPlayer:GetAttributes()) do
+        if attrName:match("^Tower_") then owned[attrName:gsub("^Tower_","")] = true end
+    end
+    return owned
+end
+
+-- // ==================== BUY CONFIG ====================
+
+local BuyConfig  = nil
+local BuyHistory = {}
+
+local function loadBuyConfig()
+    local url = Config.BuyConfigURL
+    if not url or url == "" then
+        warn("[ADS] BuyConfigURL not set — smart-buy disabled.")
+        return false
+    end
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(res) ~= "string" or #res < 10 then
+        warn("[ADS] Failed to fetch buy_config: "..tostring(res)); return false
+    end
+    local parseOk, data = pcall(function() return loadstring(res)() end)
+    if not parseOk or type(data) ~= "table" then
+        warn("[ADS] buy_config parse error: "..tostring(data)); return false
+    end
+    table.sort(data, function(a, b) return (a.Priority or 99) < (b.Priority or 99) end)
+    BuyConfig = data
+    log("buy_config loaded: "..#BuyConfig.." rules")
+    return true
+end
+
+local function buyTower(towerName)
+    log("Buying: "..towerName)
+    local ok, err = pcall(function()
+        ReplicatedStorage:WaitForChild("RemoteFunction", 5)
+            :InvokeServer("Shop", "Purchase", "Tower", towerName)
+    end)
+    if ok then
+        BuyHistory[towerName] = (BuyHistory[towerName] or 0) + 1
+        log("Purchased: "..towerName)
+    else
+        log("Purchase failed ("..towerName.."): "..tostring(err))
+    end
+    task.wait(0.6)
+end
+
+local function checkConditions(rule, level, coins, owned, currentMode)
+    local c = rule.Conditions or {}
+    local tower = rule.Tower or ""
+    local count = BuyHistory[tower] or 0
+    if c.OneTimeOnly and count >= 1 then return "skip" end
+    local limit = c.BuyLimit or 0
+    if limit > 0 and count >= limit then return "skip" end
+    if c.SkipIfMode and #c.SkipIfMode > 0 and currentMode then
+        for _, m in ipairs(c.SkipIfMode) do if m == currentMode then return "skip" end end
+    end
+    if c.OnlyIfMode and #c.OnlyIfMode > 0 and currentMode then
+        local match = false
+        for _, m in ipairs(c.OnlyIfMode) do if m == currentMode then match = true; break end end
+        if not match then return "skip" end
+    end
+    if c.MaxLevel and level > c.MaxLevel then return "skip" end
+    if c.MinLevel and level < c.MinLevel then return "wait" end
+    if c.RequireTower and #c.RequireTower > 0 then
+        for _, req in ipairs(c.RequireTower) do
+            if not owned[req] then return "wait" end
+        end
+    end
+    if c.MaxCoins and coins > c.MaxCoins then return "skip" end
+    if c.MinCoins and coins < c.MinCoins then return "farm" end
+    return "ok"
+end
+
+local function getPendingBuys(currentMode)
+    if not BuyConfig then return {canBuyNow={},needFarm={},waiting={}}, true end
+    local level, coins = getPlayerStats()
+    local owned = getOwnedTowers()
+    local canBuyNow, needFarm, waiting = {}, {}, {}
+    for _, rule in ipairs(BuyConfig) do
+        local tower = rule.Tower or ""
+        if tower ~= "" and not owned[tower] then
+            local status = checkConditions(rule, level, coins, owned, currentMode)
+            if status == "ok" then table.insert(canBuyNow, rule)
+            elseif status == "farm" then table.insert(needFarm, rule)
+            elseif status == "wait" then table.insert(waiting, rule)
+            end
+        end
+    end
+    local allDone = (#canBuyNow == 0 and #needFarm == 0 and #waiting == 0)
+    return {canBuyNow=canBuyNow, needFarm=needFarm, waiting=waiting}, allDone
+end
+
+local function totalCoinsNeeded(farmList)
+    local _, coins = getPlayerStats()
+    local total = 0
+    for _, rule in ipairs(farmList) do
+        local need = (rule.Conditions and rule.Conditions.MinCoins) or 0
+        if need > coins then total = total + (need - coins) end
+    end
+    return total
+end
+
+-- // ==================== SMART BUY LOOP ====================
+
+local POLL_INTERVAL = Config.FarmPollInterval or 30
+
+local function hop()
+    log("Hopping...")
+    pcall(function() TeleportService:Teleport(3260590327) end)
+    task.wait(5)
+end
+
+local function smartBuyLoop(currentMode)
+    if not BuyConfig then log("No buy_config — skipping."); return end
+    log("=== Smart Buy Loop START ===")
+    while true do
+        local pending, allDone = getPendingBuys(currentMode)
+        if #pending.canBuyNow > 0 then
+            for _, rule in ipairs(pending.canBuyNow) do buyTower(rule.Tower) end
+            continue
+        end
+        if allDone then log("=== Smart Buy Loop DONE ==="); return end
+        if #pending.needFarm == 0 and #pending.waiting > 0 then
+            log("Waiting on Level/dependency — proceeding to strat."); return
+        end
+        if #pending.needFarm > 0 then
+            local needed = totalCoinsNeeded(pending.needFarm)
+            log(string.format("Need %d more coins for %d tower(s). Farming (Mode: %s)...",
+                needed, #pending.needFarm, currentMode))
+            local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+            local payload = {difficulty=currentMode, mode="survival", count=1}
+            if currentMode == "Hardcore" then payload = {mode="hardcore",difficulty="Easy",count=1}
+            elseif currentMode == "Voidcore" then payload = {mode="hardcore",difficulty="Hard",count=1} end
+            pcall(function() RemoteFunc:InvokeServer("Multiplayer","v2:start",payload) end)
+            local farmStart = os.clock()
+            while true do
+                task.wait(POLL_INTERVAL)
+                local _, currentCoins = getPlayerStats()
+                log(string.format("[Farm] Coins: %d / need %d more", currentCoins, needed))
+                local newPending, newDone = getPendingBuys(currentMode)
+                if newDone or #newPending.canBuyNow > 0 then
+                    log("Coins ready! Hopping to lobby...")
+                    hop()
+                    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                    if pg then
+                        local t = os.clock()
+                        repeat task.wait(1)
+                        until pg:FindFirstChild("ReactLobbyHud") or (os.clock()-t > 30)
+                    end
+                    task.wait(2); break
+                end
+                if os.clock() - farmStart > 1200 then
+                    log("[Farm] Timeout — re-queueing...")
+                    pcall(function() RemoteFunc:InvokeServer("Multiplayer","v2:start",payload) end)
+                    farmStart = os.clock()
+                end
+            end
+        end
+    end
+end
+
+-- // ==================== GAME HELPERS ====================
+
+local function getCurrentMap()
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if state then
+        local m = state:FindFirstChild("Map")
+        if m then local ok, v = pcall(function() return m.Value end); if ok and v ~= "" then return v end end
+    end
+    local mf = workspace:FindFirstChild("Map")
+    if mf then return mf.Name end
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("SurfaceGui") and d.Name == "MapDisplay" then
+            local t = d:FindFirstChild("Title")
+            if t and t.Text ~= "" then return t.Text end
+        end
+    end
+    return nil
+end
+
+local function getCurrentMode()
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if state then
+        local d = state:FindFirstChild("Difficulty")
+        if d then local ok, v = pcall(function() return d.Value end); if ok then return v end end
+        local m = state:FindFirstChild("Mode")
+        if m then local ok, v = pcall(function() return m.Value end); if ok then return v end end
+    end
+    return nil
+end
+
+local function findInShared(mapName, modeName)
+    if not mapName then return nil end
+    local modes = SharedDB[mapName]
+    if not modes then
+        local low = mapName:lower()
+        for k, v in pairs(SharedDB) do
+            if k:lower() == low then modes = v; break end
+            if mapName:find(k) or k:find(mapName) then modes = v; break end
+            if mapName:gsub("%s+",""):lower() == k:gsub("%s+",""):lower() then modes = v; break end
+        end
+    end
+    if not modes then return nil end
+    modeName = modeName or Config.Mode
+    local url = modes[modeName]
+    if not url then
+        local lm = modeName:lower()
+        for k, v in pairs(modes) do if k:lower() == lm then url = v; break end end
+    end
+    if not url then
+        local fm, fu = next(modes)
+        if fu then log("Mode '"..modeName.."' not found, using: "..fm); url = fu end
+    end
+    return url
+end
+
+-- // ==================== STRAT RUNNER ====================
+
+local function extractLoadout(code)
+    if not code or type(code) ~= "string" then return {} end
+    local towers, seen = {}, {}
+    local function scanBlock(block)
+        if not block then return end
+        for name in block:gmatch('["\']([^"\']+)["\']') do
+            if not seen[name] then seen[name]=true; table.insert(towers,name) end
+        end
+    end
+    scanBlock(code:match('TDS%s*[:%.]%s*Loadout%s*%(%s*(%b{})%s*%)'))
+    if #towers == 0 then scanBlock(code:match('[Ll]oadout%s*=%s*(%b{})')) end
+    if #towers == 0 then scanBlock(code:match('[Tt]owers%s*=%s*(%b{})')) end
+    return towers
+end
+
+local function checkStratLoadout(stratCode)
+    local required = extractLoadout(stratCode)
+    if #required == 0 then return end
+    log("[StratBuy] Needs: "..table.concat(required,", "))
+    local owned = getOwnedTowers()
+    for _, tower in ipairs(required) do
+        if not owned[tower] then
+            buyTower(tower); owned[tower] = true
+        else
+            log("[StratBuy] Own: "..tower)
+        end
+    end
+end
+
+local function runStrat(url)
+    if not url then return end
+    log("Executing: "..url)
+    local stratCode
+    for i = 1, 3 do
+        local ok, res = pcall(function() return game:HttpGet(url) end)
+        if ok and type(res) == "string" and #res > 10 then stratCode = res; break end
+        task.wait(1)
+    end
+    if not stratCode then log("Failed to fetch strat code."); return false end
+    checkStratLoadout(stratCode)
+    for i = 1, 10 do
+        local ok, err = pcall(function() loadstring(stratCode)() end)
+        if ok then log("Strat running!"); return true end
+        log("Attempt "..i.."/10 failed: "..tostring(err))
+        task.wait(1)
+    end
+    log("Failed after 10 attempts")
+    return false
+end
+
+-- // ==================== LOBBY / MATCHMAKING ====================
+
+local MatchmakingMap = {
+    PizzaParty="halloween", Badlands="badlands",
+    PollutedWasteland="polluted", DuckyEasy="ducky2025", DuckyHard="ducky2025",
+}
+
+local function buildPayload(mode)
+    if mode == "Hardcore" then return {mode="hardcore",difficulty="Easy",count=1}
+    elseif mode == "Voidcore" then return {mode="hardcore",difficulty="Hard",count=1}
+    elseif MatchmakingMap[mode] then
+        local p = {mode=MatchmakingMap[mode],count=1}
+        if mode:match("Ducky") then p.difficulty=mode:gsub("Ducky","") end
+        return p
+    else return {difficulty=mode,mode="survival",count=1} end
+end
+
+local function autoReady()
+    task.spawn(function()
+        local reps = ReplicatedStorage:WaitForChild("StateReplicators")
+        local vote = reps:WaitForChild("VoteReplicator")
+        repeat task.wait(0.5)
+        until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
+        pcall(function() ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting","Skip") end)
+        log("Ready sent")
+    end)
+end
+
+local function startMatchmaking()
+    log("Matchmaking: "..Config.Mode)
+    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+    local payload = buildPayload(Config.Mode)
+    repeat
+        local ok, res = pcall(function() return RemoteFunc:InvokeServer("Multiplayer","v2:start",payload) end)
+        if ok and (res == true or (type(res)=="table" and res.Success==true) or (type(res)=="userdata")) then
+            log("Matchmaking OK"); break
+        end
+        task.wait(0.5)
+    until false
+end
+
+-- // ==================== VALIDATE AND RUN (with fallback veto) ====================
+
+local function validateAndRun()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then hop(); return end
+
+    log("Waiting for intermission...")
+    local startT = os.clock()
+    repeat
+        if pg:FindFirstChild("ReactGameIntermission") then break end
+        if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        task.wait(0.5)
+    until (os.clock() - startT > 60)
+
+    -- อยู่ในเกมแล้ว (ข้ามไปสแกนตรงๆ)
+    if pg:FindFirstChild("ReactUniversalHotbar") then
+        local url = findInShared(getCurrentMap(), getCurrentMode())
+        if url then runStrat(url) end
+        return
+    end
+
+    -- ── อยู่ใน intermission ──
+    -- ตัวแปรสำหรับ fallback veto
+    local lastSeenMap  = nil   -- แมพล่าสุดที่เห็นและไม่มีใน DB
+    local lastVetoTime = 0     -- เวลาที่ veto ครั้งล่าสุด
+    local vetoCount    = 0     -- นับว่า veto ไปกี่ครั้งแล้วในรอบนี้
+    local restartSent  = false -- ส่ง v2:start ใหม่แล้วหรือยัง
+    local loopStart    = os.clock()
+
+    while true do
+        task.wait(1)
+
+        local mapName  = getCurrentMap()
+        local modeName = getCurrentMode()
+        log("Check -> "..tostring(mapName).." | "..tostring(modeName))
+
+        -- เจอแมพที่มีใน DB → รอ hotbar แล้วรัน
+        local url = findInShared(mapName, modeName)
+        if url then
+            log("Match found!")
+            repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+            task.wait(0.5)
+            runStrat(url)
+            return
+        end
+
+        -- ไม่มีแมพในสาย (ยังโหลดอยู่)
+        if not mapName then task.wait(1); continue end
+
+        -- ────────────────────────────────────────────
+        -- FALLBACK VETO LOGIC
+        -- ────────────────────────────────────────────
+
+        if mapName == lastSeenMap then
+            -- แมพซ้ำกับที่เพิ่ง veto ไป → รอ 5 วิแล้วเช็คใหม่
+            local waited = os.clock() - lastVetoTime
+            if waited < 5 then
+                log(string.format(
+                    "Same map '%s' after veto — waiting %.1fs more...",
+                    mapName, 5 - waited
+                ))
+                task.wait(5 - waited)
+                continue
+            else
+                -- รอ 5 วิครบแล้วยังได้แมพเดิม → re-queue แทน veto
+                log("Same map persists after 5s wait — re-queueing v2:start...")
+                local ok = pcall(function()
+                    ReplicatedStorage:WaitForChild("RemoteFunction")
+                        :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
+                end)
+                if ok then
+                    log("v2:start sent — resetting veto state.")
+                    lastSeenMap  = nil
+                    lastVetoTime = 0
+                    vetoCount    = 0
+                    restartSent  = false
+                else
+                    log("v2:start failed — hopping...")
+                    hop(); return
+                end
+            end
+        else
+            -- แมพใหม่ที่ไม่มีใน DB → veto
+            log(string.format("No strat for '%s' — vetoing...", mapName))
+            local Event = ReplicatedStorage:FindFirstChild("RemoteEvent")
+            if Event then
+                pcall(function() Event:FireServer("LobbyVoting","Veto") end)
+            end
+            lastSeenMap  = mapName
+            lastVetoTime = os.clock()
+            vetoCount    = vetoCount + 1
+            restartSent  = false
+
+            -- ถ้า veto เยอะเกินไป (>3 ครั้ง) → re-queue เพื่อหลีกเลี่ยง vote ban
+            if vetoCount > 3 then
+                log("Too many vetoes — re-queueing v2:start instead...")
+                local ok = pcall(function()
+                    ReplicatedStorage:WaitForChild("RemoteFunction")
+                        :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
+                end)
+                if ok then
+                    log("v2:start sent.")
+                    vetoCount   = 0
+                    lastSeenMap = nil
+                else
+                    log("v2:start failed — hopping...")
+                    hop(); return
+                end
+            end
+        end
+
+        -- Global timeout
+        if os.clock() - loopStart > 120 then
+            log("Global timeout — hopping...")
+            hop(); return
+        end
+    end
+end
+
+-- // ==================== MAIN ====================
+
+if not scanFiles() then warn("[ADS] Scan failed!"); return end
+
+local mapCount, modeCount = 0, 0
+for _, modes in pairs(SharedDB) do
+    mapCount = mapCount + 1
+    for _ in pairs(modes) do modeCount = modeCount + 1 end
+end
+log("Database: "..mapCount.." maps, "..modeCount.." modes")
+if mapCount == 0 then warn("[ADS] No strategies found!"); return end
+
+local GameState = "UNKNOWN"
+local pg = LocalPlayer:FindFirstChild("PlayerGui")
+if pg then
+    if pg:FindFirstChild("ReactLobbyHud") then GameState = "LOBBY"
+    elseif pg:FindFirstChild("ReactUniversalHotbar") then GameState = "GAME" end
+end
+
+log("State: "..GameState)
+
+if loadBuyConfig() then
+    smartBuyLoop(Config.Mode)
+end
+
+if GameState == "LOBBY" then
+    startMatchmaking()
+    autoReady()
+    pg.ChildAdded:Connect(function(child)
+        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
+            task.wait(1)
+            validateAndRun()
+        end
+    end)
+
+elseif GameState == "GAME" then
+    local url = findInShared(getCurrentMap(), getCurrentMode())
+    if url then
+        runStrat(url)
+    else
+        log("Not match. Vetoing...")
+        pcall(function() ReplicatedStorage.RemoteEvent:FireServer("LobbyVoting","Veto") end)
+        task.wait(6)
+        local newUrl = findInShared(getCurrentMap(), getCurrentMode())
+        if newUrl then runStrat(newUrl); return end
+        log("Restarting v2:start...")
+        local ok = pcall(function()
+            ReplicatedStorage:WaitForChild("RemoteFunction")
+                :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
+        end)
+        if not ok then hop() end
+    end
+
+else
+    pg.ChildAdded:Connect(function(child)
+        if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
+            task.wait(1)
+            validateAndRun()
+        end
+    end)
+end
+
+log("Initialized")
         if Config.Path and Config.Path ~= "" then
             baseURL = baseURL .. Config.Path .. "/"
         end
