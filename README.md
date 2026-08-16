@@ -15,7 +15,7 @@ getgenv().ADS_Config = {
     Mode = "Easy"
 }
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/main/Loader"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/Loader"))()
 
 ```
 # you can add same map name but different mode too!
