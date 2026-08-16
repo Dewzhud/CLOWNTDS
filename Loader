@@ -891,7 +891,7 @@ local function validateAndRun()
 
     local vetoSent, loopStart = false, os.clock()
     while true do
-        task.wait()
+        task.wait(5)
         local mapName, modeName = getCurrentMap(), getCurrentMode()
         log("Check -> "..tostring(mapName).." | "..tostring(modeName))
         local url = findInShared(mapName, modeName)
@@ -900,7 +900,7 @@ local function validateAndRun()
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(0.5)
             runStrat(url)
-            return
+            break
         end
         if not vetoSent then
             log("Not match. Vetoing...")
