@@ -1,9 +1,8 @@
--- // ==================== ADS LOADER V8 (SCAN ALL FILES) ==================== //
+-- // ==================== ADS LOADER V8 ==================== //
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
 
--- ── Safe defaults ── ป้องกัน nil ทุก field
 Config.Repo             = Config.Repo             or ""
 Config.Branch           = Config.Branch           or "main"
 Config.Path             = Config.Path             or ""
@@ -20,24 +19,27 @@ local LocalPlayer       = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local function log(msg) print("[ADS] " .. tostring(msg)) end
 
--- รอให้ TDS โหลด Coins + Level attribute ก่อน (เหมือนที่ TDS Loader ทำ)
--- ถ้าไม่รอ LocalPlayer.Coins / .Level จะ nil → attempt to index nil
+-- // ── safe loadstring ──
+-- executor บางตัว override loadstring ไว้ ใช้ตัวที่มีอยู่จริง
+local _loadstring = loadstring or function() return nil, "loadstring unavailable" end
+
+-- // ── waitForTDS ──
 local function waitForTDS()
-    log("Waiting for TDS to load...")
-    -- Coins/Level/Gems เป็น Attribute ไม่ใช่ Instance — ใช้ GetAttribute polling
+    log("Waiting for TDS...")
     local t = os.clock()
     repeat
         task.wait(0.3)
         local loading = LocalPlayer:GetAttribute("Loading")
         if loading == false then break end
     until os.clock() - t > 60
-    -- รอ Coins + Level attribute มีค่า
+
     local t2 = os.clock()
     repeat
         task.wait(0.3)
     until (LocalPlayer:GetAttribute("Coins") ~= nil
         and LocalPlayer:GetAttribute("Level") ~= nil)
         or os.clock() - t2 > 30
+
     log("TDS ready.")
 end
 
@@ -94,19 +96,462 @@ local function extractFromCode(code, url)
     return false
 end
 
--- fix URL ไม่ใช้ gsub chain ยาว
 local function fixURL(u)
-    u = u:gsub("//", "/")      -- ลบ double slash ทั้งหมดก่อน
-    u = u:gsub(":/", "://")    -- คืน :// กลับมา
+    u = u:gsub("//", "/")
+    u = u:gsub(":/", "://")
     return u
 end
 
 local function fetchGitHubContents(repo, path, branch, baseURL)
     local items = {}
-    local apiURL = "https://api.github.com/repos/" .. repo .. "/contents/" .. (path or "") .. "?ref=" .. (branch or "main")
+    local apiURL = "https://api.github.com/repos/" .. repo .. "/contents/"
+        .. (path or "") .. "?ref=" .. (branch or "main")
 
     local ok, res = pcall(function() return game:HttpGet(apiURL) end)
     if not ok or not res then return items end
+
+    local decodeOk, data
+    decodeOk, data = pcall(function() return HttpService:JSONDecode(res) end)
+    if not decodeOk or type(data) ~= "table" then return items end
+
+    for _, item in ipairs(data) do
+        if item.type == "file" and item.name:match("%.lua$") then
+            local u = baseURL .. (path and (path .. "/") or "") .. item.name
+            table.insert(items, fixURL(u))
+        elseif item.type == "dir" then
+            local sub = (path and (path .. "/") or "") .. item.name
+            local subItems = fetchGitHubContents(repo, sub, branch, baseURL)
+            for _, su in ipairs(subItems) do
+                table.insert(items, su)
+            end
+        end
+    end
+    return items
+end
+
+local function scanFiles()
+    local baseURL = Config.BaseURL or ""
+    if baseURL == "" and Config.Repo ~= "" then
+        baseURL = "https://raw.githubusercontent.com/" .. Config.Repo
+            .. "/" .. Config.Branch .. "/"
+        if Config.Path ~= "" then
+            baseURL = baseURL .. Config.Path .. "/"
+        end
+    end
+    if baseURL == "" then warn("[ADS] No BaseURL or Repo!"); return false end
+    if baseURL:sub(-1) ~= "/" then baseURL = baseURL .. "/" end
+    log("Scanning: " .. baseURL)
+
+    local fileURLs = {}
+    if Config.Repo ~= "" then
+        fileURLs = fetchGitHubContents(Config.Repo, Config.Path, Config.Branch, baseURL)
+        log("Found " .. #fileURLs .. " .lua files")
+    end
+
+    if #fileURLs == 0 then warn("[ADS] No files found!"); return false end
+
+    for _, fileURL in ipairs(fileURLs) do
+        local code = nil
+        for i = 1, 3 do
+            local ok2, res2 = pcall(function() return game:HttpGet(fileURL) end)
+            if ok2 and type(res2) == "string" and #res2 > 50 then
+                code = res2
+                break
+            end
+            task.wait(1)
+        end
+        if code then extractFromCode(code, fileURL) end
+    end
+    return true
+end
+
+-- // ==================== HELPERS ====================
+
+local MatchmakingMap = {
+    PizzaParty        = "halloween",
+    Badlands          = "badlands",
+    PollutedWasteland = "polluted",
+    DuckyEasy         = "ducky2025",
+    DuckyHard         = "ducky2025",
+}
+
+local function buildPayload(mode)
+    if mode == "Hardcore" then
+        return {mode = "hardcore", difficulty = "Easy", count = 1}
+    elseif mode == "Voidcore" then
+        return {mode = "hardcore", difficulty = "Hard", count = 1}
+    elseif MatchmakingMap[mode] then
+        local p = {mode = MatchmakingMap[mode], count = 1}
+        if mode:match("Ducky") then p.difficulty = mode:gsub("Ducky", "") end
+        return p
+    else
+        return {difficulty = mode, mode = "survival", count = 1}
+    end
+end
+
+local function hop()
+    log("Hopping...")
+    pcall(function() TeleportService:Teleport(3260590327) end)
+    task.wait(5)
+end
+
+local function getCurrentMap()
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if state then
+        local m = state:FindFirstChild("Map")
+        if m then
+            local ok, v = pcall(function() return m.Value end)
+            if ok and v and v ~= "" then return v end
+        end
+    end
+    local mf = workspace:FindFirstChild("Map")
+    if mf then return mf.Name end
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("SurfaceGui") and d.Name == "MapDisplay" then
+            local t = d:FindFirstChild("Title")
+            if t and t.Text ~= "" then return t.Text end
+        end
+    end
+    return nil
+end
+
+local function getCurrentMode()
+    local state = ReplicatedStorage:FindFirstChild("State")
+    if state then
+        local d = state:FindFirstChild("Difficulty")
+        if d then
+            local ok, v = pcall(function() return d.Value end)
+            if ok and v then return v end
+        end
+        local m = state:FindFirstChild("Mode")
+        if m then
+            local ok, v = pcall(function() return m.Value end)
+            if ok and v then return v end
+        end
+    end
+    return nil
+end
+
+local function findInShared(mapName, modeName)
+    if not mapName then return nil end
+
+    local modes = SharedDB[mapName]
+    if not modes then
+        local low      = mapName:lower()
+        local mapStrip = mapName:gsub("%s+", ""):lower()
+        for k, v in pairs(SharedDB) do
+            if k:lower() == low then
+                modes = v; break
+            end
+            local ok1, r1 = pcall(function() return mapName:find(k, 1, true) end)
+            local ok2, r2 = pcall(function() return k:find(mapName, 1, true) end)
+            if (ok1 and r1) or (ok2 and r2) then
+                modes = v; break
+            end
+            if k:gsub("%s+", ""):lower() == mapStrip then
+                modes = v; break
+            end
+        end
+    end
+    if not modes then return nil end
+
+    modeName = modeName or Config.Mode or ""
+
+    local url = nil
+    if modeName ~= "" then
+        url = modes[modeName]
+        if not url then
+            local lm = modeName:lower()
+            for k, v in pairs(modes) do
+                if k:lower() == lm then url = v; break end
+            end
+        end
+    end
+
+    if not url then
+        local fm, fu = next(modes)
+        if fu then
+            log("Mode '" .. tostring(modeName) .. "' not found, using: " .. tostring(fm))
+            url = fu
+        end
+    end
+    return url
+end
+
+-- // ── runStrat ── (ประกาศก่อน validateAndRun ที่เรียกมัน)
+local function runStrat(url)
+    if not url then return false end
+    log("Executing: " .. tostring(url))
+
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(res) ~= "string" or #res < 10 then
+        log("HttpGet failed: " .. tostring(res))
+        return false
+    end
+
+    local fn, err = _loadstring(res)
+    if not fn then
+        log("loadstring failed: " .. tostring(err))
+        return false
+    end
+
+    local runOk, runErr = pcall(fn)
+    if runOk then
+        log("Strat running!")
+        return true
+    end
+    log("Strat error: " .. tostring(runErr))
+    return false
+end
+
+-- // ── autoReady ── (ประกาศก่อน startMatchmaking)
+local function autoReady()
+    task.spawn(function()
+        local ok, reps = pcall(function()
+            return ReplicatedStorage:WaitForChild("StateReplicators", 30)
+        end)
+        if not ok or not reps then return end
+        local ok2, vote = pcall(function()
+            return reps:WaitForChild("VoteReplicator", 30)
+        end)
+        if not ok2 or not vote then return end
+        repeat task.wait(0.5)
+        until vote:GetAttribute("Enabled") == true
+            and vote:GetAttribute("Title") == "Ready?"
+        pcall(function()
+            ReplicatedStorage:WaitForChild("RemoteFunction", 10)
+                :InvokeServer("Voting", "Skip")
+        end)
+        log("Ready sent")
+    end)
+end
+
+local function startMatchmaking()
+    log("Matchmaking: " .. Config.Mode)
+    local ok, RemoteFunc = pcall(function()
+        return ReplicatedStorage:WaitForChild("RemoteFunction", 30)
+    end)
+    if not ok or not RemoteFunc then
+        warn("[ADS] RemoteFunction not found!")
+        return
+    end
+    local payload = buildPayload(Config.Mode)
+    repeat
+        local callOk, res = pcall(function()
+            return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload)
+        end)
+        if callOk and (
+            res == true
+            or (type(res) == "table" and res.Success == true)
+            or (type(res) == "userdata")
+        ) then
+            log("Matchmaking OK")
+            break
+        end
+        task.wait(0.5)
+    until false
+end
+
+-- // ==================== VALIDATE AND RUN ====================
+
+local isRunning = false
+
+local function validateAndRun()
+    if isRunning then
+        log("Already running — ignoring.")
+        return
+    end
+    isRunning = true
+
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        or LocalPlayer:WaitForChild("PlayerGui", 30)
+    if not pg then
+        isRunning = false
+        hop()
+        return
+    end
+
+    log("Waiting for intermission...")
+    local startT = os.clock()
+    repeat
+        if pg:FindFirstChild("ReactGameIntermission") then break end
+        if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        task.wait(0.5)
+    until os.clock() - startT > 60
+
+    if pg:FindFirstChild("ReactUniversalHotbar") then
+        local url = findInShared(getCurrentMap(), getCurrentMode())
+        if url then
+            runStrat(url)
+        else
+            log("In-game but no strat found.")
+            isRunning = false
+        end
+        return
+    end
+
+    local lastSeenMap  = nil
+    local lastVetoTime = 0
+    local vetoCount    = 0
+    local loopStart    = os.clock()
+
+    while true do
+        task.wait(1)
+
+        local mapName  = getCurrentMap()
+        local modeName = getCurrentMode()
+        log("Check -> " .. tostring(mapName) .. " | " .. tostring(modeName))
+
+        local url = findInShared(mapName, modeName)
+        if url then
+            log("Match found! Waiting for game...")
+            repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+            task.wait(0.5)
+            runStrat(url)
+            return
+        end
+
+        if not mapName then
+            task.wait(1)
+            goto loopEnd
+        end
+
+        if mapName == lastSeenMap then
+            local waited = os.clock() - lastVetoTime
+            if waited < 5 then
+                log(string.format("Same map '%s' — waiting %.1fs...", mapName, 5 - waited))
+                task.wait(5 - waited)
+                goto loopEnd
+            end
+            log("Same map after 5s — re-queueing...")
+            local qOk = pcall(function()
+                ReplicatedStorage:WaitForChild("RemoteFunction", 10)
+                    :InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
+            end)
+            if qOk then
+                log("v2:start sent.")
+                lastSeenMap = nil; lastVetoTime = 0; vetoCount = 0
+            else
+                log("v2:start failed — hopping...")
+                isRunning = false; hop(); return
+            end
+        else
+            log(string.format("No strat for '%s' — vetoing...", mapName))
+            pcall(function()
+                local ev = ReplicatedStorage:FindFirstChild("RemoteEvent")
+                if ev then ev:FireServer("LobbyVoting", "Veto") end
+            end)
+            lastSeenMap  = mapName
+            lastVetoTime = os.clock()
+            vetoCount    = vetoCount + 1
+
+            if vetoCount > 3 then
+                log("Too many vetoes — re-queueing...")
+                local qOk = pcall(function()
+                    ReplicatedStorage:WaitForChild("RemoteFunction", 10)
+                        :InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
+                end)
+                if qOk then
+                    log("v2:start sent.")
+                    vetoCount = 0; lastSeenMap = nil
+                else
+                    log("v2:start failed — hopping...")
+                    isRunning = false; hop(); return
+                end
+            end
+        end
+
+        if os.clock() - loopStart > 120 then
+            log("Timeout — hopping...")
+            isRunning = false; hop(); return
+        end
+
+        ::loopEnd::
+    end
+end
+
+-- // ==================== MAIN ====================
+
+local scanOk = scanFiles()
+if not scanOk then warn("[ADS] Scan failed!"); return end
+
+local mapCount  = 0
+local modeCount = 0
+for _, modes in pairs(SharedDB) do
+    mapCount = mapCount + 1
+    for _ in pairs(modes) do modeCount = modeCount + 1 end
+end
+log("Database: " .. mapCount .. " maps, " .. modeCount .. " modes")
+if mapCount == 0 then warn("[ADS] No strategies found!"); return end
+
+local GameState = "UNKNOWN"
+local pg = LocalPlayer:FindFirstChild("PlayerGui")
+if pg then
+    if pg:FindFirstChild("ReactLobbyHud") then
+        GameState = "LOBBY"
+    elseif pg:FindFirstChild("ReactUniversalHotbar") then
+        GameState = "GAME"
+    end
+end
+
+log("State: " .. GameState)
+
+if GameState == "LOBBY" then
+    startMatchmaking()
+    autoReady()
+    if not pg then pg = LocalPlayer:WaitForChild("PlayerGui", 30) end
+    if pg then
+        pg.ChildAdded:Connect(function(child)
+            if child.Name == "ReactGameIntermission"
+            or child.Name == "ReactUniversalHotbar" then
+                task.wait(1)
+                task.spawn(validateAndRun)
+            end
+        end)
+    end
+
+elseif GameState == "GAME" then
+    local url = findInShared(getCurrentMap(), getCurrentMode())
+    if url then
+        isRunning = true
+        runStrat(url)
+    else
+        log("No strat in-game. Vetoing...")
+        pcall(function()
+            local ev = ReplicatedStorage:FindFirstChild("RemoteEvent")
+            if ev then ev:FireServer("LobbyVoting", "Veto") end
+        end)
+        task.wait(6)
+        local newUrl = findInShared(getCurrentMap(), getCurrentMode())
+        if newUrl then
+            isRunning = true
+            runStrat(newUrl)
+        else
+            log("Still no strat — re-queueing...")
+            local ok = pcall(function()
+                ReplicatedStorage:WaitForChild("RemoteFunction", 10)
+                    :InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
+            end)
+            if not ok then hop() end
+        end
+    end
+
+else
+    if not pg then pg = LocalPlayer:WaitForChild("PlayerGui", 30) end
+    if pg then
+        pg.ChildAdded:Connect(function(child)
+            if child.Name == "ReactGameIntermission"
+            or child.Name == "ReactUniversalHotbar" then
+                task.wait(1)
+                task.spawn(validateAndRun)
+            end
+        end)
+    else
+        warn("[ADS] PlayerGui not found.")
+    end
+end
+
+log("Initialized")
 
     -- แยก decode ออกมาคนละบรรทัด ไม่ใช้ ; inline
     local data
