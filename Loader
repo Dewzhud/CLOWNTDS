@@ -424,23 +424,300 @@ else
     end)
 end
 
-log("Initialized")}
+log("Initialized")-- // ==================== PLAYER STATS ====================
 
-local function buildPayload(mode)
-    if mode == "Hardcore" then return {mode="hardcore",difficulty="Easy",count=1}
-    elseif mode == "Voidcore" then return {mode="hardcore",difficulty="Hard",count=1}
-    elseif MatchmakingMap[mode] then
-        local p = {mode=MatchmakingMap[mode],count=1}
-        if mode:match("Ducky") then p.difficulty=mode:gsub("Ducky","") end
-        return p
-    else return {difficulty=mode,mode="survival",count=1} end
+local function getPlayerStats()
+    local level, coins = 0, 0
+    local ok, val
+
+    ok, val = pcall(function() return LocalPlayer.Level end)
+    if ok and type(val) == "number" then level = val
+    else
+        local ls = LocalPlayer:FindFirstChild("leaderstats")
+        if ls then
+            local lv = ls:FindFirstChild("Level") or ls:FindFirstChild("level")
+            if lv then level = lv.Value or 0 end
+        end
+    end
+
+    ok, val = pcall(function() return LocalPlayer.Coins end)
+    if ok and type(val) == "number" then coins = val
+    else
+        local ls = LocalPlayer:FindFirstChild("leaderstats")
+        if ls then
+            local co = ls:FindFirstChild("Coins") or ls:FindFirstChild("coins")
+            if co then coins = co.Value or 0 end
+        end
+    end
+
+    return level, coins
 end
+
+local function getOwnedTowers()
+    local owned = {}
+    local playerData = ReplicatedStorage:FindFirstChild("PlayerData")
+        or ReplicatedStorage:FindFirstChild("Data")
+    if playerData then
+        local pd = playerData:FindFirstChild(tostring(LocalPlayer.UserId))
+            or playerData:FindFirstChild(LocalPlayer.Name)
+        if pd then
+            local tf = pd:FindFirstChild("Towers")
+                or pd:FindFirstChild("OwnedTowers")
+                or pd:FindFirstChild("Loadout")
+            if tf then for _, v in ipairs(tf:GetChildren()) do owned[v.Name] = true end end
+        end
+    end
+    for attrName in pairs(LocalPlayer:GetAttributes()) do
+        if attrName:match("^Tower_") then owned[attrName:gsub("^Tower_","")] = true end
+    end
+    return owned
+end
+
+-- // ==================== BUY CONFIG ====================
+
+local BuyConfig   = nil
+local BuyHistory  = {}   -- { [TowerName] = buyCount } สำหรับ BuyLimit / OneTimeOnly
+
+local function loadBuyConfig()
+    local url = Config.BuyConfigURL
+    if not url or url == "" then
+        warn("[ADS] BuyConfigURL not set — smart-buy disabled.")
+        return false
+    end
+    local ok, res = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(res) ~= "string" or #res < 10 then
+        warn("[ADS] Failed to fetch buy_config: "..tostring(res)); return false
+    end
+    local parseOk, data = pcall(function() return loadstring(res)() end)
+    if not parseOk or type(data) ~= "table" then
+        warn("[ADS] buy_config parse error: "..tostring(data)); return false
+    end
+    table.sort(data, function(a, b) return (a.Priority or 99) < (b.Priority or 99) end)
+    BuyConfig = data
+    log("buy_config loaded: "..#BuyConfig.." rules")
+    return true
+end
+
+local function buyTower(towerName)
+    log("Buying: "..towerName)
+    local ok, err = pcall(function()
+        ReplicatedStorage:WaitForChild("RemoteFunction",5)
+            :InvokeServer("Shop","Purchase","Tower",towerName)
+    end)
+    if ok then
+        BuyHistory[towerName] = (BuyHistory[towerName] or 0) + 1
+        log("Purchased: "..towerName.." (total: "..BuyHistory[towerName]..")")
+    else
+        log("Purchase failed ("..towerName.."): "..tostring(err))
+    end
+    task.wait(0.6)
+end
+
+--[[
+    checkConditions(rule, level, coins, owned, currentMode)
+    ─────────────────────────────────────────────────────────
+    คืน:
+        "ok"      — เงื่อนไขครบ ซื้อได้เลย
+        "skip"    — ไม่ต้องซื้อ (OneTimeOnly / BuyLimit เต็ม / SkipIfMode / OnlyIfMode ไม่ตรง)
+        "wait"    — ยังไม่ถึงเงื่อนไข Level หรือ RequireTower (ต้องรอนานกว่า)
+        "farm"    — Coins ยังไม่พอ (farm เงินแล้วกลับมาซื้อได้)
+]]
+local function checkConditions(rule, level, coins, owned, currentMode)
+    local c = rule.Conditions or {}
+    local tower = rule.Tower or ""
+
+    -- OneTimeOnly / BuyLimit
+    local buyCount = BuyHistory[tower] or 0
+    if c.OneTimeOnly and buyCount >= 1 then return "skip" end
+    local limit = c.BuyLimit or 0
+    if limit > 0 and buyCount >= limit then return "skip" end
+
+    -- SkipIfMode
+    if c.SkipIfMode and #c.SkipIfMode > 0 and currentMode then
+        for _, m in ipairs(c.SkipIfMode) do
+            if m == currentMode then return "skip" end
+        end
+    end
+
+    -- OnlyIfMode
+    if c.OnlyIfMode and #c.OnlyIfMode > 0 and currentMode then
+        local match = false
+        for _, m in ipairs(c.OnlyIfMode) do
+            if m == currentMode then match = true; break end
+        end
+        if not match then return "skip" end
+    end
+
+    -- MaxLevel
+    if c.MaxLevel and level > c.MaxLevel then return "skip" end
+
+    -- MinLevel (ต้องรอ — farm เงินไม่ช่วย)
+    if c.MinLevel and level < c.MinLevel then return "wait" end
+
+    -- RequireTower (ต้องรอให้ซื้อตัวอื่นก่อน)
+    if c.RequireTower and #c.RequireTower > 0 then
+        for _, req in ipairs(c.RequireTower) do
+            if not owned[req] then return "wait" end
+        end
+    end
+
+    -- MaxCoins
+    if c.MaxCoins and coins > c.MaxCoins then return "skip" end
+
+    -- MinCoins (farm เงินแล้วกลับมาได้)
+    if c.MinCoins and coins < c.MinCoins then return "farm" end
+
+    return "ok"
+end
+
+--[[
+    getPendingBuys(currentMode)
+    ────────────────────────────
+    คืน list ของ rule ที่ยังต้องซื้อ แบ่งเป็น:
+        canBuyNow  = { rule, ... }   ซื้อได้ทันที
+        needFarm   = { rule, ... }   ต้องการเงินเพิ่ม
+        waiting    = { rule, ... }   รอ Level / RequireTower (ยังทำอะไรไม่ได้)
+        allDone    = true/false      ไม่มีอะไรเหลือแล้ว
+]]
+local function getPendingBuys(currentMode)
+    if not BuyConfig then return {canBuyNow={},needFarm={},waiting={}}, true end
+
+    local level, coins = getPlayerStats()
+    local owned        = getOwnedTowers()
+    local canBuyNow, needFarm, waiting = {}, {}, {}
+
+    for _, rule in ipairs(BuyConfig) do
+        local tower = rule.Tower or ""
+        if tower ~= "" and not owned[tower] then
+            local status = checkConditions(rule, level, coins, owned, currentMode)
+            if status == "ok"   then table.insert(canBuyNow, rule)
+            elseif status == "farm" then table.insert(needFarm,   rule)
+            elseif status == "wait" then table.insert(waiting,    rule)
+            -- "skip" → ไม่ใส่ไหนเลย
+            end
+        end
+    end
+
+    local allDone = (#canBuyNow == 0 and #needFarm == 0 and #waiting == 0)
+    return {canBuyNow=canBuyNow, needFarm=needFarm, waiting=waiting}, allDone
+end
+
+-- คำนวณว่าต้องการเงินเพิ่มอีกเท่าไหร่รวมกัน
+local function totalCoinsNeeded(farmList)
+    local level, coins = getPlayerStats()
+    local owned        = getOwnedTowers()
+    local total = 0
+    for _, rule in ipairs(farmList) do
+        local need = (rule.Conditions and rule.Conditions.MinCoins) or 0
+        if need > coins then total = total + (need - coins) end
+    end
+    return total
+end
+
+-- // ==================== SMART BUY LOOP ====================
+
+local POLL_INTERVAL = Config.FarmPollInterval or 30  -- วินาที
 
 local function hop()
     log("Hopping...")
     pcall(function() TeleportService:Teleport(3260590327) end)
     task.wait(5)
 end
+
+--[[
+    smartBuyLoop(currentMode)
+    ──────────────────────────
+    Phase 1: ซื้อทุกอย่างที่ซื้อได้ตอนนี้
+    Phase 2: ถ้ายังมีที่ต้องซื้อแต่เงินไม่พอ
+               → ลง Mode ปกติเพื่อ farm
+               → poll เงินทุก POLL_INTERVAL วินาที
+               → พอเงินพอ → hop กลับ lobby → ซื้อ → loop ใหม่
+    Phase 3: ไม่มีอะไรเหลือแล้ว (allDone) → return เพื่อลง strat
+]]
+local function smartBuyLoop(currentMode)
+    if not BuyConfig then
+        log("No buy_config — skipping smart-buy.")
+        return
+    end
+
+    log("=== Smart Buy Loop START ===")
+
+    while true do
+        local pending, allDone = getPendingBuys(currentMode)
+
+        -- ซื้อทุกอย่างที่ซื้อได้ทันที
+        if #pending.canBuyNow > 0 then
+            for _, rule in ipairs(pending.canBuyNow) do
+                buyTower(rule.Tower)
+            end
+            -- รีเช็คหลังซื้อ (อาจปลด dependency ของตัวอื่น)
+            continue
+        end
+
+        -- ไม่มีอะไรเหลือแล้ว
+        if allDone then
+            log("=== Smart Buy Loop DONE — all towers acquired ===")
+            return
+        end
+
+        -- มีแต่ waiting (Level / RequireTower) → ไม่มีอะไรทำได้ตอนนี้ → ออกไปลง strat
+        if #pending.needFarm == 0 and #pending.waiting > 0 then
+            log("Remaining towers need higher Level or prerequisite towers.")
+            log("Proceeding to strat — will re-check next session.")
+            return
+        end
+
+        -- มี needFarm → farm เงิน
+        if #pending.needFarm > 0 then
+            local needed = totalCoinsNeeded(pending.needFarm)
+            local _, coins = getPlayerStats()
+            log(string.format(
+                "Need %d more coins for %d tower(s). Starting farm (Mode: %s)...",
+                needed, #pending.needFarm, currentMode
+            ))
+
+            -- เริ่ม matchmaking farm (ใช้ Mode เดิม)
+            local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+            local payload = {difficulty = currentMode, mode = "survival", count = 1}
+            if currentMode == "Hardcore" then payload = {mode="hardcore", difficulty="Easy", count=1}
+            elseif currentMode == "Voidcore" then payload = {mode="hardcore", difficulty="Hard", count=1} end
+
+            pcall(function() RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload) end)
+
+            -- Poll เงินทุก POLL_INTERVAL วินาที
+            local farmStart = os.clock()
+            while true do
+                task.wait(POLL_INTERVAL)
+                local _, currentCoins = getPlayerStats()
+                log(string.format("[Farm] Coins: %d / need %d more", currentCoins, needed))
+
+                -- เช็คใหม่ว่าเงินพอหรือยัง
+                local newPending, newDone = getPendingBuys(currentMode)
+                if newDone or #newPending.canBuyNow > 0 then
+                    log("Coins ready! Hopping back to lobby to buy...")
+                    hop()
+                    -- รอ lobby โหลด
+                    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+                    if pg then
+                        local t = os.clock()
+                        repeat task.wait(1) until pg:FindFirstChild("ReactLobbyHud") or (os.clock()-t > 30)
+                    end
+                    task.wait(2)
+                    break  -- ออกจาก farm loop → วนซื้อใหม่
+                end
+
+                -- Safety: farm นานเกิน 20 นาที hop ใหม่
+                if os.clock() - farmStart > 1200 then
+                    log("[Farm] Timeout — re-queueing...")
+                    pcall(function() RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload) end)
+                    farmStart = os.clock()
+                end
+            end
+        end
+    end
+end
+
+-- // ==================== GAME HELPERS ====================
 
 local function getCurrentMap()
     local state = ReplicatedStorage:FindFirstChild("State")
@@ -495,18 +772,79 @@ local function findInShared(mapName, modeName)
     return url
 end
 
-local function runStrat(url)
-    if not url then return false end
-    log("Executing: "..url)
-    local ok, err = pcall(function()
-        loadstring(game:HttpGet(url))()
-    end)
-    if ok then
-        log("Strat running!")
-        return true
+-- // ==================== STRAT RUNNER ====================
+
+-- Extract loadout จาก strat code
+local function extractLoadout(code)
+    if not code or type(code) ~= "string" then return {} end
+    local towers, seen = {}, {}
+    local function scanBlock(block)
+        if not block then return end
+        for name in block:gmatch('["\']([^"\']+)["\']') do
+            if not seen[name] then seen[name]=true; table.insert(towers,name) end
+        end
     end
-    log("runStrat failed: "..tostring(err))
+    scanBlock(code:match('TDS%s*[:%.]%s*Loadout%s*%(%s*(%b{})%s*%)'))
+    if #towers == 0 then scanBlock(code:match('[Ll]oadout%s*=%s*(%b{})')) end
+    if #towers == 0 then scanBlock(code:match('[Tt]owers%s*=%s*(%b{})')) end
+    return towers
+end
+
+-- เช็ค + ซื้อ Tower ที่ strat ต้องใช้ (ไม่เช็ค buy_config อีก — ซื้อตรงเลยถ้าขาด)
+local function checkStratLoadout(stratCode)
+    local required = extractLoadout(stratCode)
+    if #required == 0 then return end
+    log("[StratBuy] Needs: "..table.concat(required,", "))
+    local owned = getOwnedTowers()
+    for _, tower in ipairs(required) do
+        if not owned[tower] then
+            buyTower(tower)
+            owned[tower] = true
+        else
+            log("[StratBuy] Own: "..tower)
+        end
+    end
+end
+
+local function runStrat(url)
+    if not url then return end
+    log("Executing: "..url)
+    local stratCode
+    for i = 1, 3 do
+        local ok, res = pcall(function() return game:HttpGet(url) end)
+        if ok and type(res) == "string" and #res > 10 then stratCode = res; break end
+        task.wait(1)
+    end
+    if not stratCode then log("Failed to fetch strat code."); return false end
+
+    -- ซื้อ tower ที่ strat ต้องใช้ (ไม่วน buy_config loop อีก)
+    checkStratLoadout(stratCode)
+
+    for i = 1, 10 do
+        local ok, err = pcall(function() loadstring(stratCode)() end)
+        if ok then log("Strat running!"); return true end
+        log("Attempt "..i.."/10 failed: "..tostring(err))
+        task.wait(1)
+    end
+    log("Failed after 10 attempts")
     return false
+end
+
+-- // ==================== LOBBY / MATCHMAKING ====================
+
+local MatchmakingMap = {
+    PizzaParty="halloween", Badlands="badlands",
+    PollutedWasteland="polluted", DuckyEasy="ducky2025", DuckyHard="ducky2025",
+}
+
+local function buildPayload(mode)
+    if mode == "Hardcore" then return {mode="hardcore",difficulty="Easy",count=1}
+    elseif mode == "Voidcore" then return {mode="hardcore",difficulty="Hard",count=1}
+    elseif MatchmakingMap[mode] then
+        local p = {mode=MatchmakingMap[mode],count=1}
+        if mode:match("Ducky") then p.difficulty=mode:gsub("Ducky","") end
+        return p
+    else return {difficulty=mode,mode="survival",count=1} end
 end
 
 local function autoReady()
@@ -533,28 +871,10 @@ local function startMatchmaking()
     until false
 end
 
--- // ==================== VALIDATE AND RUN ====================
-
--- Guard: ป้องกัน validateAndRun ทำงานซ้อนกัน
--- เมื่อ runStrat สำเร็จ → isRunning ค้างไว้ true เพื่อกัน ChildAdded ยิงซ้ำ
-local isRunning = false
-
 local function validateAndRun()
-    -- ถ้ากำลัง run strat อยู่แล้ว → ออกทันที
-    if isRunning then
-        log("Already running — ignoring trigger.")
-        return
-    end
-    isRunning = true
-
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then
-        isRunning = false
-        hop()
-        return
-    end
+    if not pg then hop(); return end
 
-    -- รอ intermission หรือ hotbar (max 60s)
     log("Waiting for intermission...")
     local startT = os.clock()
     repeat
@@ -563,100 +883,39 @@ local function validateAndRun()
         task.wait(0.5)
     until (os.clock() - startT > 60)
 
-    -- อยู่ในเกมแล้ว → scan แล้วรัน strat ทันที
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local url = findInShared(getCurrentMap(), getCurrentMode())
-        if url then
-            runStrat(url)
-            -- isRunning ค้างเป็น true → ไม่ให้ loop อื่นมา trigger ซ้ำ
-        else
-            log("In-game but no strat found.")
-            isRunning = false
-        end
+        if url then runStrat(url) end
         return
     end
 
-    -- ── อยู่ใน intermission → loop หาแมพ + veto fallback ──
-    local lastSeenMap  = nil
-    local lastVetoTime = 0
-    local vetoCount    = 0
-    local loopStart    = os.clock()
-
+    local vetoSent, loopStart = false, os.clock()
     while true do
-        task.wait(1)
-
-        local mapName  = getCurrentMap()
-        local modeName = getCurrentMode()
+        task.wait()
+        local mapName, modeName = getCurrentMap(), getCurrentMode()
         log("Check -> "..tostring(mapName).." | "..tostring(modeName))
-
-        -- เจอแมพที่มีใน DB → รอ hotbar แล้วรัน strat แล้วหยุด loop
         local url = findInShared(mapName, modeName)
         if url then
-            log("Match found! Waiting for game to start...")
+            log("Match found!")
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(0.5)
             runStrat(url)
-            -- isRunning ค้างเป็น true → ไม่ trigger ซ้ำ
-            return  -- ← หยุด loop และออกจาก validateAndRun ทันที
+            return
         end
-
-        -- ยังไม่มีแมพ (กำลังโหลด)
-        if not mapName then task.wait(1); continue end
-
-        -- ── Veto Fallback ──
-        if mapName == lastSeenMap then
-            -- แมพซ้ำกับที่เพิ่ง veto → รอ 5 วิก่อน
-            local waited = os.clock() - lastVetoTime
-            if waited < 5 then
-                log(string.format("Same map '%s' — waiting %.1fs...", mapName, 5 - waited))
-                task.wait(5 - waited)
-                continue
-            end
-            -- รอครบ 5 วิแล้วยังเป็นแมพเดิม → re-queue
-            log("Same map after 5s — re-queueing v2:start...")
+        if not vetoSent then
+            log("Not match. Vetoing...")
+            pcall(function() ReplicatedStorage.RemoteEvent:FireServer("LobbyVoting","Veto") end)
+            vetoSent = true
+        else
+            log("Restarting v2:start...")
             local ok = pcall(function()
                 ReplicatedStorage:WaitForChild("RemoteFunction")
                     :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
             end)
-            if ok then
-                log("v2:start sent.")
-                lastSeenMap = nil; lastVetoTime = 0; vetoCount = 0
-            else
-                log("v2:start failed — hopping...")
-                isRunning = false; hop(); return
-            end
-        else
-            -- แมพใหม่ที่ไม่มีใน DB → veto
-            log(string.format("No strat for '%s' — vetoing...", mapName))
-            pcall(function()
-                ReplicatedStorage.RemoteEvent:FireServer("LobbyVoting","Veto")
-            end)
-            lastSeenMap  = mapName
-            lastVetoTime = os.clock()
-            vetoCount    = vetoCount + 1
-
-            -- veto มากเกิน → re-queue แทน
-            if vetoCount > 3 then
-                log("Too many vetoes — re-queueing...")
-                local ok = pcall(function()
-                    ReplicatedStorage:WaitForChild("RemoteFunction")
-                        :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
-                end)
-                if ok then
-                    log("v2:start sent.")
-                    vetoCount = 0; lastSeenMap = nil
-                else
-                    log("v2:start failed — hopping...")
-                    isRunning = false; hop(); return
-                end
-            end
+            if ok then log("v2:start OK."); vetoSent = false
+            else log("v2:start failed. Hopping..."); hop(); return end
         end
-
-        -- Global timeout
-        if os.clock() - loopStart > 120 then
-            log("Timeout — hopping...")
-            isRunning = false; hop(); return
-        end
+        if os.clock() - loopStart > 60 then log("Timeout. Hopping..."); hop(); return end
     end
 end
 
@@ -681,53 +940,53 @@ end
 
 log("State: "..GameState)
 
+-- โหลด buy_config และรัน Smart Buy Loop ก่อนทำอะไรทั้งนั้น
+-- (ถ้าไม่มี BuyConfigURL จะข้ามไปลง strat เลย)
+if loadBuyConfig() then
+    smartBuyLoop(Config.Mode)
+    -- หลังจาก smartBuyLoop return → buy_config ครบแล้ว
+    -- ไม่มีการเช็ค buy_config อีกตลอด session นี้
+end
+while task.wait() do
 if GameState == "LOBBY" then
     startMatchmaking()
     autoReady()
-
-    -- ChildAdded จะยิงหลายครั้ง — isRunning กัน re-entry ทั้งหมด
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
-            task.wait(1)
-            task.spawn(validateAndRun)  -- spawn เพื่อไม่บล็อก event thread
+            task.wait(5)
+            validateAndRun()
+break
         end
     end)
 
 elseif GameState == "GAME" then
-    -- อยู่ในเกมอยู่แล้ว → รันตรง
     local url = findInShared(getCurrentMap(), getCurrentMode())
     if url then
-        isRunning = true
         runStrat(url)
 break
     else
-        -- ไม่มี strat → veto แล้วรอรอบใหม่
-        log("No strat in-game. Vetoing...")
+        log("Not match. Vetoing...")
         pcall(function() ReplicatedStorage.RemoteEvent:FireServer("LobbyVoting","Veto") end)
         task.wait(6)
         local newUrl = findInShared(getCurrentMap(), getCurrentMode())
-        if newUrl then
-            isRunning = true
-            runStrat(newUrl)
-break
-        else
-            log("Still no strat — restarting v2:start...")
-            local ok = pcall(function()
-                ReplicatedStorage:WaitForChild("RemoteFunction")
-                    :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
-            end)
-            if not ok then hop() end
-        end
+        if newUrl then runStrat(newUrl); return end
+        log("Restarting v2:start...")
+        local ok = pcall(function()
+            ReplicatedStorage:WaitForChild("RemoteFunction")
+                :InvokeServer("Multiplayer","v2:start",buildPayload(Config.Mode))
+        end)
+        if not ok then hop() 
+
+end
     end
 
 else
-    -- UNKNOWN state → รอ GUI
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
-            task.spawn(validateAndRun)
+            validateAndRun()
         end
     end)
 end
-
+end 
 log("Initialized")
