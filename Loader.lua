@@ -11,9 +11,64 @@ local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local function log(msg) print("[ADS] " .. tostring(msg)) end
 
+-- // ==================== WAIT FOR FULL LOAD ====================
+
+local function waitForLoad()
+    log("Waiting for game to load...")
+
+    -- รอ game load ก่อน
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+
+    -- รอ Loading attribute หาย
+    local timeout = os.clock()
+    while LocalPlayer:GetAttribute("Loading") == true do
+        if os.clock() - timeout > 30 then
+            log("Load timeout — continuing anyway")
+            break
+        end
+        task.wait(0.5)
+    end
+
+    -- รอ Teleporting หาย
+    timeout = os.clock()
+    while LocalPlayer:GetAttribute("Teleporting") == true do
+        if os.clock() - timeout > 30 then
+            log("Teleport timeout — continuing anyway")
+            break
+        end
+        task.wait(0.5)
+    end
+
+    -- รอ PlayerGui ขึ้น
+    local pg = LocalPlayer:WaitForChild("PlayerGui", 30)
+    if not pg then
+        warn("[ADS] PlayerGui not found!")
+        return nil
+    end
+
+    -- รอ ReactLobbyHud หรือ ReactUniversalHotbar อย่างใดอย่างหนึ่ง
+    timeout = os.clock()
+    while true do
+        if pg:FindFirstChild("ReactLobbyHud") then break end
+        if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        if os.clock() - timeout > 30 then
+            log("UI timeout — continuing anyway")
+            break
+        end
+        task.wait(0.5)
+    end
+
+    log("Game fully loaded!")
+    return pg
+end
+
+-- // ==================== SCANNER ====================
+
 local SharedDB = {}
 
-function extractFromCode(code, url)
+local function extractFromCode(code, url)
     if not code or type(code) ~= "string" then return false end
 
     local mode = nil
@@ -136,25 +191,7 @@ local function scanFiles()
     return true
 end
 
-if not scanFiles() then warn("[ADS] Scan failed!"); return end
-
-local mapCount, modeCount = 0, 0
-for map, modes in pairs(SharedDB) do
-    mapCount = mapCount + 1
-    for _ in pairs(modes) do modeCount = modeCount + 1 end
-end
-log("Database: " .. mapCount .. " maps, " .. modeCount .. " modes")
-
-if mapCount == 0 then
-    log("No strategies found — will still matchmake but won't run any strat")
-end
-
-local GameState = "UNKNOWN"
-local pg = LocalPlayer:FindFirstChild("PlayerGui")
-if pg then
-    if pg:FindFirstChild("ReactLobbyHud") then GameState = "LOBBY"
-    elseif pg:FindFirstChild("ReactUniversalHotbar") then GameState = "GAME" end
-end
+-- // ==================== GAME LOGIC ====================
 
 local function buildPayload(mode)
     local MatchmakingMap = {
@@ -281,8 +318,10 @@ end
 
 local function autoReady()
     task.spawn(function()
-        local reps = ReplicatedStorage:WaitForChild("StateReplicators")
-        local vote = reps:WaitForChild("VoteReplicator")
+        local ok, reps = pcall(function() return ReplicatedStorage:WaitForChild("StateReplicators", 15) end)
+        if not ok or not reps then log("StateReplicators not found"); return end
+        local ok2, vote = pcall(function() return reps:WaitForChild("VoteReplicator", 15) end)
+        if not ok2 or not vote then log("VoteReplicator not found"); return end
         repeat task.wait(0.5)
         until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
         pcall(function() ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting", "Skip") end)
@@ -295,8 +334,16 @@ local function startMatchmaking()
     local payload = buildPayload(Config.Mode)
     log("Payload: " .. HttpService:JSONEncode(payload))
 
-    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
+    local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction", 15)
+    if not RemoteFunc then warn("[ADS] RemoteFunction not found!"); return end
+
+    local attempts = 0
     repeat
+        attempts = attempts + 1
+        if attempts > 60 then
+            warn("[ADS] Matchmaking failed after 60 attempts")
+            break
+        end
         local success, res = pcall(function()
             return RemoteFunc:InvokeServer("Multiplayer", "v2:start", payload)
         end)
@@ -312,8 +359,7 @@ local function startMatchmaking()
     until false
 end
 
-local function validateAndRun()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+local function validateAndRun(pg)
     if not pg then hop(); return end
 
     log("Waiting for intermission or game...")
@@ -324,6 +370,7 @@ local function validateAndRun()
         task.wait(0.5)
     until (os.clock() - startT > 60)
 
+    -- เข้าเกมตรงเลย
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
@@ -337,11 +384,12 @@ local function validateAndRun()
         return
     end
 
+    -- อยู่ช่วง intermission
     local vetoSent = false
     local loopStart = os.clock()
 
     while true do
-        task.wait(5)
+        task.wait(3.5)
 
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
@@ -386,16 +434,44 @@ local function validateAndRun()
     end
 end
 
--- // MAIN
+-- // ==================== MAIN ====================
+
+-- Step 1: รอโหลดเสร็จก่อน
+local pg = waitForLoad()
+if not pg then warn("[ADS] Failed to get PlayerGui"); return end
+
+-- Step 2: Scan strategies
+if not scanFiles() then warn("[ADS] Scan failed!"); return end
+
+local mapCount, modeCount = 0, 0
+for map, modes in pairs(SharedDB) do
+    mapCount = mapCount + 1
+    for _ in pairs(modes) do modeCount = modeCount + 1 end
+end
+log("Database: " .. mapCount .. " maps, " .. modeCount .. " modes")
+
+if mapCount == 0 then
+    log("No strategies found — will still matchmake but won't run any strat")
+end
+
+-- Step 3: ตรวจ GameState
+local GameState = "UNKNOWN"
+if pg:FindFirstChild("ReactLobbyHud") then
+    GameState = "LOBBY"
+elseif pg:FindFirstChild("ReactUniversalHotbar") then
+    GameState = "GAME"
+end
+
 log("GameState: " .. GameState)
 
+-- Step 4: ทำงานตาม state
 if GameState == "LOBBY" then
     startMatchmaking()
     autoReady()
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
-            validateAndRun()
+            validateAndRun(pg)
         end
     end)
 
@@ -428,10 +504,12 @@ elseif GameState == "GAME" then
     end
 
 else
+    -- UNKNOWN — รอ UI ขึ้น
+    log("Unknown state — waiting for UI...")
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
-            validateAndRun()
+            validateAndRun(pg)
         end
     end)
 end
