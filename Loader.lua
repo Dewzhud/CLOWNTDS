@@ -419,6 +419,7 @@ local function validateAndRun(pg)
             if ok then
                 log("v2:start re-sent. Waiting...")
                 vetoSent = false
+                return
             else
                 log("v2:start failed. Hopping...")
                 hop()
@@ -493,7 +494,6 @@ elseif GameState == "GAME" then
         local newUrl = findInShared(newMap, getCurrentMode())
         if newUrl then
             runStrat(newUrl)
-            return
         end
         log("Re-sending v2:start...")
         local ok = pcall(function()
