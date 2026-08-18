@@ -353,7 +353,7 @@ local function validateAndRun()
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(2)
             runStrat(url)
-            return
+            break
         end
 
         if not vetoSent then
