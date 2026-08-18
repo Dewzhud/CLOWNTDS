@@ -389,7 +389,7 @@ local function validateAndRun(pg)
     local loopStart = os.clock()
 
     while true do
-        task.wait(3.5)
+        task.wait(5)
 
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
