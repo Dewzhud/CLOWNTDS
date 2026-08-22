@@ -359,7 +359,7 @@ local function startMatchmaking()
     until false
 end
 
--- // ==================== VALIDATOR (1 ACTION & BREAK) ====================
+-- // ==================== VALIDATOR (STEP BY STEP) ====================
 
 local function validateAndRun(pg)
     if not pg then hop(); return end
@@ -372,7 +372,7 @@ local function validateAndRun(pg)
         task.wait(0.5)
     until (os.clock() - startT > 60)
 
-    -- Already in game
+    -- STEP 0: Already in game
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
@@ -382,83 +382,60 @@ local function validateAndRun(pg)
         return
     end
 
-    -- Intermission: exactly 1 action per loop, then break or continue
-    local vetoed = false
-    local lastMap = nil
-    local vetoTime = 0
-    local loopStart = os.clock()
-
-    while true do
-        task.wait(0.5)
-
-        -- 1. Game started unexpectedly -> handle and break
-        if pg:FindFirstChild("ReactUniversalHotbar") then
-            log("Game started!")
-            local mapName = getCurrentMap()
-            local modeName = getCurrentMode()
-            local url = findInShared(mapName, modeName)
-            if url then runStrat(url) else log("No strat after game start") end
-            return
-        end
-
-        local mapName = getCurrentMap()
-        local modeName = getCurrentMode()
-        local url = findInShared(mapName, modeName)
-
-        log("Check -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
-
-        -- 2. Strat found -> Ready, wait for game, run, break
-        if url then
-            sendReady()
-            log("Waiting for game start...")
-            repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
-            task.wait(2)
-            runStrat(url)
-            return
-        end
-
-        -- 3. No strat, haven't vetoed -> Veto and continue
-        if not vetoed then
-            sendVeto()
-            vetoed = true
-            lastMap = mapName
-            vetoTime = os.clock()
-            -- only 1 action, loop back to wait for rotation
-        -- 4. Vetoed, map changed -> reset and continue
-        elseif mapName ~= lastMap then
-            log("Map rotated to: " .. tostring(mapName))
-            vetoed = false
-            lastMap = mapName
-            vetoTime = os.clock()
-            loopStart = os.clock()
-            -- only 1 action, loop back to check new strat
-        -- 5. Vetoed, map stuck -> re-matchmake and continue
-        elseif os.clock() - vetoTime > 10 then
-            log("Map stuck. Re-sending matchmaking...")
-            local ok = pcall(function()
-                local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
-                return RemoteFunc:InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
-            end)
-            if ok then
-                log("Matchmaking re-sent. Resetting veto.")
-                vetoed = false
-                lastMap = nil
-                vetoTime = os.clock()
-                loopStart = os.clock()
-            else
-                log("Re-matchmake failed. Hopping...")
-                hop()
-                return
-            end
-        end
-
-        -- 6. Global timeout -> hop and break
-        if os.clock() - loopStart > 60 then
-            log("Timeout. Hopping...")
-            hop()
-            return
-        end
+    -- Must be in intermission
+    if not pg:FindFirstChild("ReactGameIntermission") then
+        log("Not in intermission. Hopping...")
+        hop()
+        return
     end
+
+    -- STEP 1: Check current map
+    local mapName = getCurrentMap()
+    local modeName = getCurrentMode()
+    log("Step 1 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
+
+    local url = findInShared(mapName, modeName)
+    if url then
+        -- PERFECT MATCH: Ready -> Wait game -> Run -> DONE
+        log("Strat found! Sending Ready...")
+        sendReady()
+        log("Waiting for game start...")
+        repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+        task.wait(2)
+        runStrat(url)
+        log("Done.")
+        return
+    end
+
+    -- STEP 2: No strat -> Veto once
+    log("No strat. Sending Veto...")
+    sendVeto()
+
+    -- STEP 3: WAIT for map rotation (give server time to change map)
+    log("Waiting 8s for map rotation...")
+    task.wait(8)
+
+    -- STEP 4: Check again after rotation
+    mapName = getCurrentMap()
+    modeName = getCurrentMode()
+    log("Step 4 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
+
+    url = findInShared(mapName, modeName)
+    if url then
+        -- ROTATED TO GOOD MAP: Ready -> Wait game -> Run -> DONE
+        log("New strat found! Sending Ready...")
+        sendReady()
+        log("Waiting for game start...")
+        repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+        task.wait(2)
+        runStrat(url)
+        log("Done.")
+        return
+    end
+
+    -- STEP 5: Still no good map after veto -> HOP
+    log("Still no strat after veto. Hopping...")
+    hop()
 end
 
 -- // ==================== MAIN ====================
@@ -490,7 +467,6 @@ log("GameState: " .. GameState)
 
 if GameState == "LOBBY" then
     startMatchmaking()
-    -- NO early autoReady! Ready is sent only when strat is confirmed inside validateAndRun
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
