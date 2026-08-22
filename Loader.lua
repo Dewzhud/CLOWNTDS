@@ -1,4 +1,4 @@
--- // ==================== ADS LOADER V8 (SCAN ALL FILES) ==================== //
+-- // ==================== ADS LOADER V8 (PLAYBACK ADAPTED) ==================== //
 
 local Config = getgenv().ADS_Config
 if not Config then warn("[ADS] Config missing!"); return end
@@ -13,6 +13,77 @@ local function log(msg) print("[ADS] " .. tostring(msg)) end
 
 -- กันซ้ำ
 local isProcessing = false
+
+-- // ==================== PLAYBACK SYSTEM (RIPPED & ADAPTED) ==================== //
+
+-- Ensure TDS table exists for strats to use
+local TDS = shared.TDSTable or {
+    PlacedTowers = {},
+    ActiveStrat = true,
+    MatchmakingMap = {
+        ["PizzaParty"] = "halloween",
+        ["Badlands"] = "badlands",
+        ["PollutedWasteland"] = "polluted",
+        ["DuckyEasy"] = "ducky2025",
+        ["DuckyHard"] = "ducky2025"
+    }
+}
+shared.TDSTable = TDS
+shared["TDS_Table"] = TDS
+TDS["placed_towers"] = TDS.PlacedTowers
+TDS["active_strat"] = TDS.ActiveStrat
+TDS["matchmaking_map"] = TDS.MatchmakingMap
+
+local UpgradeHistory = {}
+local executed_actions = {}
+
+function TDS:ResetAllStates()
+    table.clear(self.PlacedTowers)
+    table.clear(UpgradeHistory)
+    table.clear(executed_actions)
+    log("States reset")
+end
+
+-- Adapted RunStrategy: takes URL instead of local file
+function TDS:RunStrategy(url)
+    local Globals = getgenv()
+
+    -- Cancel any existing strategy thread
+    if Globals.activeStrategyThread then
+        pcall(task.cancel, Globals.activeStrategyThread)
+        Globals.activeStrategyThread = nil
+        log("Cancelled previous strategy thread")
+    end
+
+    -- Reset states before new strat
+    self:ResetAllStates()
+
+    -- Spawn new managed thread
+    Globals.activeStrategyThread = task.spawn(function()
+        Globals.tdsReplaying = true
+        log("Strategy thread started")
+
+        local ok, err = pcall(function()
+            local code = game:HttpGet(url)
+            if not code or #code < 50 then
+                error("Downloaded code too short or empty")
+            end
+            local func = loadstring(code)
+            if not func then
+                error("Failed to compile strategy")
+            end
+            func()
+        end)
+
+        if not ok then
+            warn("[ADS] Strategy error: " .. tostring(err))
+        end
+
+        Globals.tdsReplaying = false
+        Globals.activeStrategyThread = nil
+        log("Strategy thread ended")
+    end)
+end
 
 -- // ==================== WAIT FOR FULL LOAD ====================
 
@@ -296,23 +367,12 @@ local function findInShared(mapName, modeName)
     return url
 end
 
+-- ADAPTED: Uses TDS:RunStrategy instead of raw loadstring
 local function runStrat(url)
-    if not url then return end
+    if not url then return false end
     log("Executing: " .. url)
-    for i = 1, 10 do
-        local ok, err = pcall(function()
-            loadstring(game:HttpGet(url))()
-        end)
-        if ok then
-            log("Strat running!")
-            return true
-        else
-            log("Attempt " .. i .. "/10 failed: " .. tostring(err))
-            task.wait(1)
-        end
-    end
-    log("Failed after 10 attempts")
-    return false
+    TDS:RunStrategy(url)
+    return true
 end
 
 local function sendReady()
@@ -388,7 +448,6 @@ end
 -- // ==================== IN-GAME INTERMISSION HANDLER ====================
 
 local function handleIntermission(pg)
-    -- กันซ้ำ
     if isProcessing then
         log("Already handling intermission, ignored")
         return
@@ -399,7 +458,24 @@ local function handleIntermission(pg)
         isProcessing = false
     end
 
-    -- รอ buttons ก่อนทำอะไรทั้งหมด
+    if not pg then
+        hop()
+        finish()
+        return
+    end
+
+    -- Already in game
+    if pg:FindFirstChild("ReactUniversalHotbar") then
+        local mapName = getCurrentMap()
+        local modeName = getCurrentMode()
+        log("In-game: map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
+        local url = findInShared(mapName, modeName)
+        if url then runStrat(url) else log("No strat for this map/mode") end
+        finish()
+        return
+    end
+
+    -- Wait for buttons
     log("Waiting for intermission buttons...")
     if not waitForButtons(pg, 60) then
         log("Buttons not found. Hopping...")
@@ -408,7 +484,7 @@ local function handleIntermission(pg)
         return
     end
 
-    -- STEP 1: เช็คแมพครั้งแรก
+    -- Step 1: Check map
     local mapName = getCurrentMap()
     local modeName = getCurrentMode()
     log("Step 1 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
@@ -434,12 +510,12 @@ local function handleIntermission(pg)
         return
     end
 
-    -- STEP 2: ไม่เจอ strat -> Veto ครั้งเดียว
+    -- Step 2: Veto once
     log("No strat. Vetoing...")
     sendVeto()
     local originalMap = mapName
 
-    -- STEP 3: รอ map หมุน (loop แค่ตรงนี้)
+    -- Step 3: Wait for map rotation (loop only here)
     log("Waiting for map rotation...")
     local vetoStart = os.clock()
     local mapChanged = false
@@ -448,7 +524,6 @@ local function handleIntermission(pg)
     while os.clock() - vetoStart < 20 do
         task.wait(0.5)
 
-        -- กรณีเกมเริ่มกะทันหัน (คนอื่น ready)
         if pg:FindFirstChild("ReactUniversalHotbar") then
             log("Game started during veto wait")
             local m = getCurrentMap()
@@ -459,7 +534,6 @@ local function handleIntermission(pg)
             return
         end
 
-        -- กรณีถูกเตะกลับ lobby
         if pg:FindFirstChild("ReactLobbyHud") then
             log("Returned to lobby. Restarting matchmaking...")
             startMatchmaking()
@@ -467,7 +541,6 @@ local function handleIntermission(pg)
             return
         end
 
-        -- กรณี intermission หายไป
         if not pg:FindFirstChild("ReactGameIntermission") then
             log("Intermission ended. Waiting for next state...")
             task.wait(2)
@@ -486,10 +559,8 @@ local function handleIntermission(pg)
             return
         end
 
-        -- เช็คว่า map เปลี่ยนแล้วหรือยัง
         local currentMap = getCurrentMap()
         if currentMap and currentMap ~= "" and currentMap ~= originalMap then
-            -- Double-check ความเสถียร 1 วิ
             task.wait(1)
             if getCurrentMap() == currentMap then
                 newMap = currentMap
@@ -507,7 +578,7 @@ local function handleIntermission(pg)
         return
     end
 
-    -- STEP 4: เช็คแมพอีกทีหลังหมุน
+    -- Step 4: Check rotated map
     mapName = newMap
     modeName = getCurrentMode()
     log("Step 4 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
@@ -555,7 +626,6 @@ if mapCount == 0 then
     log("No strategies found — will still matchmake but won't run any strat")
 end
 
--- ตรวจสถานะตอนโหลด
 local GameState = "UNKNOWN"
 if pg:FindFirstChild("ReactLobbyHud") then
     GameState = "LOBBY"
@@ -570,7 +640,13 @@ log("GameState: " .. GameState)
 if GameState == "LOBBY" then
     startMatchmaking()
 
-    -- รอ intermission ในอนาคต
+    if pg:FindFirstChild("ReactGameIntermission") then
+        task.spawn(function()
+            task.wait(2)
+            handleIntermission(pg)
+        end)
+    end
+
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" then
             task.wait(2)
@@ -579,30 +655,14 @@ if GameState == "LOBBY" then
     end)
 
 elseif GameState == "GAME" then
-    -- อยู่ในเกมอยู่แล้ว
-    local mapName = getCurrentMap()
-    local modeName = getCurrentMode()
-    log("Already in-game: map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
-    local url = findInShared(mapName, modeName)
-    if url then
-        runStrat(url)
-    else
-        log("No strat for current map/mode.")
-        local ok = pcall(function()
-            local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
-            return RemoteFunc:InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
-        end)
-        if not ok then hop() end
-    end
+    handleIntermission(pg)
 
 elseif GameState == "INTERMISSION" then
-    -- อยู่ intermission อยู่แล้วตอนโหลด
     task.spawn(function()
         task.wait(2)
         handleIntermission(pg)
     end)
 
-    -- ฟังต่อไปในกรณีที่ intermission ใหม่ขึ้นมาอีก (เกมต่อเนื่อง)
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" then
             task.wait(2)
