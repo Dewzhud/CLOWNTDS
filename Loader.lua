@@ -16,12 +16,10 @@ local function log(msg) print("[ADS] " .. tostring(msg)) end
 local function waitForLoad()
     log("Waiting for game to load...")
 
-    -- รอ game load ก่อน
     if not game:IsLoaded() then
         game.Loaded:wait()
     end
 
-    -- รอ Loading attribute หาย
     local timeout = os.clock()
     while LocalPlayer:GetAttribute("Loading") == true do
         if os.clock() - timeout > 30 then
@@ -31,7 +29,6 @@ local function waitForLoad()
         task.wait(0.5)
     end
 
-    -- รอ Teleporting หาย
     timeout = os.clock()
     while LocalPlayer:GetAttribute("Teleporting") == true do
         if os.clock() - timeout > 30 then
@@ -41,14 +38,12 @@ local function waitForLoad()
         task.wait(0.5)
     end
 
-    -- รอ PlayerGui ขึ้น
     local pg = LocalPlayer:WaitForChild("PlayerGui", 30)
     if not pg then
         warn("[ADS] PlayerGui not found!")
         return nil
     end
 
-    -- รอ ReactLobbyHud หรือ ReactUniversalHotbar อย่างใดอย่างหนึ่ง
     timeout = os.clock()
     while true do
         if pg:FindFirstChild("ReactLobbyHud") then break end
@@ -316,17 +311,22 @@ local function runStrat(url)
     return false
 end
 
-local function autoReady()
-    task.spawn(function()
-        local ok, reps = pcall(function() return ReplicatedStorage:WaitForChild("StateReplicators", 15) end)
-        if not ok or not reps then log("StateReplicators not found"); return end
-        local ok2, vote = pcall(function() return reps:WaitForChild("VoteReplicator", 15) end)
-        if not ok2 or not vote then log("VoteReplicator not found"); return end
-        repeat task.wait(0.5)
-        until vote:GetAttribute("Enabled") == true and vote:GetAttribute("Title") == "Ready?"
-        pcall(function() ReplicatedStorage:WaitForChild("RemoteFunction"):InvokeServer("Voting", "Skip") end)
-        log("Ready sent")
+local function sendReady()
+    log("Sending Ready...")
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("RemoteFunction", 10):InvokeServer("Voting", "Skip")
     end)
+    if ok then log("Ready sent") else log("Ready failed") end
+    return ok
+end
+
+local function sendVeto()
+    log("Sending Veto...")
+    local ok = pcall(function()
+        ReplicatedStorage:WaitForChild("RemoteEvent", 10):FireServer("LobbyVoting", "Veto")
+    end)
+    if ok then log("Veto sent") else log("Veto failed") end
+    return ok
 end
 
 local function startMatchmaking()
@@ -359,6 +359,8 @@ local function startMatchmaking()
     until false
 end
 
+-- // ==================== VALIDATOR (1 ACTION & BREAK) ====================
+
 local function validateAndRun(pg)
     if not pg then hop(); return end
 
@@ -370,88 +372,87 @@ local function validateAndRun(pg)
         task.wait(0.5)
     until (os.clock() - startT > 60)
 
-    -- เข้าเกมตรงเลย
+    -- Already in game
     if pg:FindFirstChild("ReactUniversalHotbar") then
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
         log("In-game: map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
         local url = findInShared(mapName, modeName)
-        if url then
-            runStrat(url)
-        else
-            log("No strat for this map/mode")
-        end
+        if url then runStrat(url) else log("No strat for this map/mode") end
         return
     end
 
-    -- อยู่ช่วง intermission
-    local vetoSent = false
+    -- Intermission: exactly 1 action per loop, then break or continue
+    local vetoed = false
     local lastMap = nil
+    local vetoTime = 0
     local loopStart = os.clock()
 
     while true do
         task.wait(0.5)
 
+        -- 1. Game started unexpectedly -> handle and break
+        if pg:FindFirstChild("ReactUniversalHotbar") then
+            log("Game started!")
+            local mapName = getCurrentMap()
+            local modeName = getCurrentMode()
+            local url = findInShared(mapName, modeName)
+            if url then runStrat(url) else log("No strat after game start") end
+            return
+        end
+
         local mapName = getCurrentMap()
         local modeName = getCurrentMode()
-        log("Intermission check -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
-
         local url = findInShared(mapName, modeName)
+
+        log("Check -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
+
+        -- 2. Strat found -> Ready, wait for game, run, break
         if url then
-            log("Strat found! Waiting for game start...")
+            sendReady()
+            log("Waiting for game start...")
             repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
             task.wait(2)
             runStrat(url)
-            break
+            return
         end
 
-        -- ถ้า map ยังไม่เปลี่ยนหลังจาก veto ไปแล้ว รอต่อ
-        if vetoSent and mapName == lastMap then
-            log("Veto sent, waiting for map rotation...")
-            -- รอ map เปลี่ยน (สูงสุด 8 วินาทีต่อรอบ)
-            local waitStart = os.clock()
-            while mapName == lastMap and (os.clock() - waitStart) < 8 do
-                task.wait(0.5)
-                mapName = getCurrentMap()
-            end
-
-            -- ถ้า map เปลี่ยนแล้ว ให้กลับไปเช็ค strat ใหม่ในรอบถัดไป
-            if mapName ~= lastMap then
-                log("Map rotated to: " .. tostring(mapName))
-                vetoSent = false
-                lastMap = mapName
-                loopStart = os.clock() -- reset timeout
-                continue
-            end
-        end
-
-        -- ถ้ายังไม่ได้ส่ง veto หรือ map ไม่เปลี่ยนหลังรอแล้ว
-        if not vetoSent then
-            log("No strat for this map. Vetoing...")
-            pcall(function()
-                ReplicatedStorage.RemoteEvent:FireServer("LobbyVoting", "Veto")
-            end)
-            vetoSent = true
+        -- 3. No strat, haven't vetoed -> Veto and continue
+        if not vetoed then
+            sendVeto()
+            vetoed = true
             lastMap = mapName
-        else
-            -- veto แล้วแต่ map ไม่เปลี่ยน ลอง re-send matchmaking
-            log("Still no strat after veto. Re-sending v2:start...")
+            vetoTime = os.clock()
+            -- only 1 action, loop back to wait for rotation
+        -- 4. Vetoed, map changed -> reset and continue
+        elseif mapName ~= lastMap then
+            log("Map rotated to: " .. tostring(mapName))
+            vetoed = false
+            lastMap = mapName
+            vetoTime = os.clock()
+            loopStart = os.clock()
+            -- only 1 action, loop back to check new strat
+        -- 5. Vetoed, map stuck -> re-matchmake and continue
+        elseif os.clock() - vetoTime > 10 then
+            log("Map stuck. Re-sending matchmaking...")
             local ok = pcall(function()
                 local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
                 return RemoteFunc:InvokeServer("Multiplayer", "v2:start", buildPayload(Config.Mode))
             end)
             if ok then
-                log("v2:start re-sent. Resetting loop timer...")
-                vetoSent = false
+                log("Matchmaking re-sent. Resetting veto.")
+                vetoed = false
                 lastMap = nil
+                vetoTime = os.clock()
                 loopStart = os.clock()
             else
-                log("v2:start failed. Hopping...")
+                log("Re-matchmake failed. Hopping...")
                 hop()
                 return
             end
         end
 
+        -- 6. Global timeout -> hop and break
         if os.clock() - loopStart > 60 then
             log("Timeout. Hopping...")
             hop()
@@ -462,11 +463,9 @@ end
 
 -- // ==================== MAIN ====================
 
--- Step 1: รอโหลดเสร็จก่อน
 local pg = waitForLoad()
 if not pg then warn("[ADS] Failed to get PlayerGui"); return end
 
--- Step 2: Scan strategies
 if not scanFiles() then warn("[ADS] Scan failed!"); return end
 
 local mapCount, modeCount = 0, 0
@@ -480,7 +479,6 @@ if mapCount == 0 then
     log("No strategies found — will still matchmake but won't run any strat")
 end
 
--- Step 3: ตรวจ GameState
 local GameState = "UNKNOWN"
 if pg:FindFirstChild("ReactLobbyHud") then
     GameState = "LOBBY"
@@ -490,10 +488,9 @@ end
 
 log("GameState: " .. GameState)
 
--- Step 4: ทำงานตาม state
 if GameState == "LOBBY" then
     startMatchmaking()
-    autoReady()
+    -- NO early autoReady! Ready is sent only when strat is confirmed inside validateAndRun
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
@@ -510,7 +507,6 @@ elseif GameState == "GAME" then
     if url then
         runStrat(url)
     else
-        -- in-game with no strat — best effort: re-queue and hop if needed
         log("No strat for current map/mode.")
         local ok = pcall(function()
             local RemoteFunc = ReplicatedStorage:WaitForChild("RemoteFunction")
@@ -520,7 +516,6 @@ elseif GameState == "GAME" then
     end
 
 else
-    -- UNKNOWN — รอ UI ขึ้น
     log("Unknown state — waiting for UI...")
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
