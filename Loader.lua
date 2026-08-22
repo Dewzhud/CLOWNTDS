@@ -11,6 +11,9 @@ local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local function log(msg) print("[ADS] " .. tostring(msg)) end
 
+-- กันซ้ำ
+local isProcessing = false
+
 -- // ==================== WAIT FOR FULL LOAD ====================
 
 local function waitForLoad()
@@ -359,83 +362,145 @@ local function startMatchmaking()
     until false
 end
 
--- // ==================== VALIDATOR (STEP BY STEP) ====================
+-- // ==================== VALIDATOR (FIXED) ====================
 
 local function validateAndRun(pg)
-    if not pg then hop(); return end
-
-    log("Waiting for intermission or game...")
-    local startT = os.clock()
-    repeat
-        if pg:FindFirstChild("ReactGameIntermission") then break end
-        if pg:FindFirstChild("ReactUniversalHotbar") then break end
-        task.wait(0.5)
-    until (os.clock() - startT > 60)
-
-    -- STEP 0: Already in game
-    if pg:FindFirstChild("ReactUniversalHotbar") then
-        local mapName = getCurrentMap()
-        local modeName = getCurrentMode()
-        log("In-game: map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
-        local url = findInShared(mapName, modeName)
-        if url then runStrat(url) else log("No strat for this map/mode") end
+    -- กันซ้ำ: ถ้ากำลังประมวลผลอยู่ ไม่ต้องทำซ้ำ
+    if isProcessing then
+        log("Already processing, ignored")
         return
     end
+    isProcessing = true
 
-    -- Must be in intermission
-    if not pg:FindFirstChild("ReactGameIntermission") then
-        log("Not in intermission. Hopping...")
+    local function done()
+        isProcessing = false
+    end
+
+    if not pg then
+        done()
         hop()
         return
     end
 
-    -- STEP 1: Check current map
+    log("Waiting for intermission or game...")
+    local startT = os.clock()
+    local state = nil
+
+    repeat
+        if pg:FindFirstChild("ReactUniversalHotbar") then
+            state = "GAME"
+            break
+        end
+        if pg:FindFirstChild("ReactGameIntermission") then
+            state = "INTERMISSION"
+            break
+        end
+        task.wait(0.5)
+    until os.clock() - startT > 60
+
+    if not state then
+        log("Timeout waiting for UI")
+        done()
+        hop()
+        return
+    end
+
+    -- ==================== ALREADY IN GAME ====================
+    if state == "GAME" then
+        local mapName = getCurrentMap()
+        local modeName = getCurrentMode()
+        log("In-game: map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
+        local url = findInShared(mapName, modeName)
+        if url then
+            runStrat(url)
+        else
+            log("No strat for this map/mode")
+        end
+        done()
+        return
+    end
+
+    -- ==================== INTERMISSION FLOW ====================
+    -- Step 1: Check first map
     local mapName = getCurrentMap()
     local modeName = getCurrentMode()
     log("Step 1 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
 
     local url = findInShared(mapName, modeName)
     if url then
-        -- PERFECT MATCH: Ready -> Wait game -> Run -> DONE
-        log("Strat found! Sending Ready...")
+        log("Strat found! Readying...")
         sendReady()
         log("Waiting for game start...")
-        repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+        repeat
+            task.wait(0.5)
+            if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        until false
         task.wait(2)
         runStrat(url)
-        log("Done.")
+        done()
         return
     end
 
-    -- STEP 2: No strat -> Veto once
-    log("No strat. Sending Veto...")
+    -- Step 2: No strat -> Veto ONCE
+    log("No strat. Vetoing...")
     sendVeto()
 
-    -- STEP 3: WAIT for map rotation (give server time to change map)
-    log("Waiting 8s for map rotation...")
-    task.wait(8)
+    -- Step 3: Wait for map to ACTUALLY change (poll every 0.5s, max 12s)
+    local originalMap = mapName
+    local vetoStart = os.clock()
+    local mapChanged = false
 
-    -- STEP 4: Check again after rotation
+    while os.clock() - vetoStart < 12 do
+        task.wait(0.5)
+
+        -- ถ้าเกมเริ่มกะทันหัน (คนอื่น ready) -> จัดการแล้วจบ
+        if pg:FindFirstChild("ReactUniversalHotbar") then
+            log("Game started during veto wait")
+            local m = getCurrentMap()
+            local md = getCurrentMode()
+            local u = findInShared(m, md)
+            if u then runStrat(u) else log("No strat for this game") end
+            done()
+            return
+        end
+
+        local currentMap = getCurrentMap()
+        if currentMap and currentMap ~= originalMap then
+            log("Map rotated to: " .. tostring(currentMap))
+            mapChanged = true
+            break
+        end
+    end
+
+    if not mapChanged then
+        log("Map didn't rotate after veto. Hopping...")
+        done()
+        hop()
+        return
+    end
+
+    -- Step 4: Check rotated map
     mapName = getCurrentMap()
     modeName = getCurrentMode()
     log("Step 4 -> map=" .. tostring(mapName) .. " mode=" .. tostring(modeName))
 
     url = findInShared(mapName, modeName)
     if url then
-        -- ROTATED TO GOOD MAP: Ready -> Wait game -> Run -> DONE
-        log("New strat found! Sending Ready...")
+        log("Strat found after veto! Readying...")
         sendReady()
         log("Waiting for game start...")
-        repeat task.wait(0.5) until pg:FindFirstChild("ReactUniversalHotbar")
+        repeat
+            task.wait(0.5)
+            if pg:FindFirstChild("ReactUniversalHotbar") then break end
+        until false
         task.wait(2)
         runStrat(url)
-        log("Done.")
-        return
+    else
+        log("Rotated map still no strat. Hopping...")
+        hop()
     end
 
-    -- STEP 5: Still no good map after veto -> HOP
-    log("Still no strat after veto. Hopping...")
-    hop()
+    done()
 end
 
 -- // ==================== MAIN ====================
@@ -467,6 +532,15 @@ log("GameState: " .. GameState)
 
 if GameState == "LOBBY" then
     startMatchmaking()
+
+    -- ถ้า Intermission ขึ้นอยู่แล้วตอนโหลด ให้ประมวลผลเลย
+    if pg:FindFirstChild("ReactGameIntermission") then
+        task.spawn(function()
+            task.wait(1)
+            validateAndRun(pg)
+        end)
+    end
+
     pg.ChildAdded:Connect(function(child)
         if child.Name == "ReactGameIntermission" or child.Name == "ReactUniversalHotbar" then
             task.wait(1)
