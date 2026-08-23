@@ -121,13 +121,13 @@ local function GetSwingEvent()
     return nil
 end
 
--- ── AUTO DUNGEON (dungeon room enemyFolders) ─────────────────────────────────
-_G.Farm = false
+-- ── AUTO Skill  ─────────────────────────────────
+_G.Skill = false
 tab2:CreateToggle({
     name = "Auto Dungeon",
     value = false,
     callback = function(value)
-        _G.Farm = value
+        _G.Skill = value
         if not value then return end
 
         local plr = game.Players.LocalPlayer
@@ -150,12 +150,12 @@ tab2:CreateToggle({
             end
 
             local skill1, skill2 = getskill()
-            while _G.Farm do
+            while _G.Skill do
                skill1:FireServer()
                 skill2:FireServer
 taskwait(4)
             end
-        until not _G.Farm
+        until not _G.Skill
     end
 })
 
