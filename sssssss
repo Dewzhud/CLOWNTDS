@@ -1,5 +1,6 @@
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 workspace.Gravity = 2000
+
 local window = Rayfield:CreateWindow({
     name = "WANDA",
     subtitle = "DQR",
@@ -15,41 +16,67 @@ local tab  = window:CreateTab({ name = "Room",    icon = 93364949241311 })
 local tab2 = window:CreateTab({ name = "Dungeon", icon = 93364949241311 })
 local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 
+-- ── SHARED STATE ──────────────────────────────────────────────────────────────
+
 local StageName = "Desert Temple"
+local Difficult  = "Easy"
+_G.IsHc          = false
+_G.AutoRoom      = false
+_G.AutoRejoin    = false
+_G.Farm          = false
+_G.FarmEnemies   = false
+
+-- ── SHARED HELPERS ────────────────────────────────────────────────────────────
+
+-- Returns the first "swing" RemoteEvent found inside the local character
+local function GetSwingEvent()
+    local char = game.Players.LocalPlayer.Character
+    if not char then return nil end
+    for _, v in pairs(char:GetDescendants()) do
+        if v:IsA("RemoteEvent") and v.Name == "swing" then
+            return v
+        end
+    end
+    return nil
+end
+
+-- ── TAB 1 – ROOM ─────────────────────────────────────────────────────────────
+
 tab:CreateDropdown({
-    name = "Stage",
+    name        = "Stage",
     multiSelect = false,
-    value = { "Desert Temple" },
-    options = {"Desert Temple", "Winter Outpost", "Pirate Island", "King's Castle", "The Underworld", "Samurai Palace", "The Canals", "Ghastly Harbor", "Steampunk Sewers", "Orbital Outpost"},
+    value       = { "Desert Temple" },
+    options     = {
+        "Desert Temple", "Winter Outpost", "Pirate Island",
+        "King's Castle", "The Underworld", "Samurai Palace",
+        "The Canals", "Ghastly Harbor", "Steampunk Sewers", "Orbital Outpost"
+    },
     callback = function(value)
         StageName = value
-    end
+    end,
 })
 
-local Difficult = "Easy"
 tab:CreateDropdown({
-    name = "Difficult",
+    name        = "Difficult",
     multiSelect = false,
-    value = { "Easy" },
-    options = {"Easy", "Medium", "Hard", "Insane", "Nightmare"},
+    value       = { "Easy" },
+    options     = { "Easy", "Medium", "Hard", "Insane", "Nightmare" },
     callback = function(value)
         Difficult = value
     end,
 })
 
-_G.IsHc = false
 tab:CreateToggle({
-    name = "Hardcore",
-    value = false,
+    name     = "Hardcore",
+    value    = false,
     callback = function(value)
         _G.IsHc = value
     end,
 })
 
-_G.AutoRoom = false
 tab:CreateToggle({
-    name = "Auto Create Room",
-    value = false,
+    name     = "Auto Create Room",
+    value    = false,
     callback = function(value)
         _G.AutoRoom = value
         while _G.AutoRoom do
@@ -59,25 +86,17 @@ tab:CreateToggle({
             if not GUi then continue end
 
             local remotes = game:GetService("ReplicatedStorage").remotes
-            remotes.createLobby:InvokeServer(
-                StageName,
-                Difficult,
-                0,
-                _G.IsHc,
-                false,
-                false
-            )
+            remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
             break
         end
-    end
+    end,
 })
 
-_G.AutoRejoin = false
 local rejoinConnection = nil
 tab:CreateToggle({
-    name = "Auto Rejoin",
-    value = false,
+    name     = "Auto Rejoin",
+    value    = false,
     callback = function(value)
         _G.AutoRejoin = value
 
@@ -96,95 +115,65 @@ tab:CreateToggle({
             task.wait(3)
 
             local remotes = game:GetService("ReplicatedStorage").remotes
-            remotes.createLobby:InvokeServer(
-                StageName,
-                Difficult,
-                0,
-                _G.IsHc,
-                false,
-                false
-            )
+            remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
         end)
-    end
+    end,
 })
 
--- shared helper to get swing event from character
-local function GetSwingEvent()
-    local char = game.Players.LocalPlayer.Character
-    if not char then return nil end
-    for _, v in pairs(char:GetDescendants()) do
-        if v:IsA("RemoteEvent") and v.Name == "swing" then
-            return v
-        end
-    end
-    return nil
-end
+-- ── TAB 2 – DUNGEON ───────────────────────────────────────────────────────────
 
--- ── AUTO Skill  ─────────────────────────────────
-_G.Skill = false
 tab2:CreateToggle({
-    name = "Auto Dungeon",
-    value = false,
-    callback = function(value)
-        _G.Skill = value
-        if not value then return end
-
-        local plr = game.Players.LocalPlayer
-        local char = plr.Character
-        if not char then return end
-        local backpack = plr.Backpack:GetChildren()
-
-            local function getskill()
-                local table = {}
-                for _, skill in pairs(backpack) do
-                    if skill:IsA("Tool") and skill:WaitForChild('spellEvent') then
-                        table.insert(table,skill)
-                            if #table == 2 then
-                                    break
-                            end                        
-                        return table[1] , table[2] 
-                    end
-
-                end
-            end
-
-            local skill1, skill2 = getskill()
-            while _G.Skill do
-               skill1:FireServer()
-                skill2:FireServer
-taskwait(4)
-            end
-        until not _G.Skill
-    end
-})
-
--- ── AUTO DUNGEON (dungeon room enemyFolders) ─────────────────────────────────
-_G.Farm = false
-tab2:CreateToggle({
-    name = "Auto Dungeon",
-    value = false,
+    name     = "Auto Dungeon",
+    value    = false,
     callback = function(value)
         _G.Farm = value
         if not value then return end
 
-        local plr = game.Players.LocalPlayer
+        local plr  = game.Players.LocalPlayer
         local char = plr.Character
         if not char then return end
 
         char.HumanoidRootPart.Anchored = false
 
+        -- Click start button if it exists
         local startButton = plr.PlayerGui:WaitForChild("startButton", 3)
         if startButton then
             game:GetService("ReplicatedStorage").remotes.changeStartValue:FireServer()
         end
 
-        
-
         local Dun = workspace:WaitForChild("dungeon", 30)
         if not Dun then
             warn("Dungeon folder never appeared!")
             return
+        end
+
+        -- FIX: Get first skill RemoteEvent (spellEvent) from backpack
+        local function GetSkillEvent()
+            for _, tool in pairs(plr.Backpack:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local spell = tool:FindFirstChild("spellEvent")
+                    if spell and spell:IsA("RemoteEvent") then
+                        return spell
+                    end
+                end
+            end
+            return nil
+        end
+
+        -- FIX: Get second skill RemoteEvent from backpack (skip the first one)
+        local function GetSkillEvents()
+            local events = {}
+            for _, tool in pairs(plr.Backpack:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local spell = tool:FindFirstChild("spellEvent")
+                    if spell and spell:IsA("RemoteEvent") then
+                        table.insert(events, spell)
+                        if #events == 2 then break end
+                    end
+                end
+            end
+            return events[1], events[2]
         end
 
         local function GetMon()
@@ -205,16 +194,22 @@ tab2:CreateToggle({
             return nil, nil
         end
 
+        local swingEvent        = GetSwingEvent()
+        local skill1, skill2    = GetSkillEvents()
+
+        if not swingEvent then
+            warn("No swing RemoteEvent found in character!")
+            return
+        end
+
         repeat
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then continue end
-                local swingEvent = GetSwingEvent()
-        if not swingEvent then
-            warn("No swing accessory found!")
-            return
-        end
 
+            -- FIX: Fire skill events properly with ()
+            if skill1 then skill1:FireServer() end
+            if skill2 then skill2:FireServer() end
 
             while _G.Farm do
                 swingEvent:FireServer()
@@ -229,24 +224,24 @@ tab2:CreateToggle({
                 if not currentChar then break end
 
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
-                local lookAt = CFrame.lookAt(targetPos, hrp.Position)
+                local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
                 task.wait()
             end
         until not _G.Farm
-    end
+    end,
 })
 
--- ── AUTO ENEMIES (workspace.enemies) ─────────────────────────────────────────
-_G.FarmEnemies = false
+-- ── TAB 3 – ENEMIES ──────────────────────────────────────────────────────────
+
 tab3:CreateToggle({
-    name = "Auto Enemies",
-    value = false,
+    name     = "Auto Enemies",
+    value    = false,
     callback = function(value)
         _G.FarmEnemies = value
         if not value then return end
 
-        local plr = game.Players.LocalPlayer
+        local plr  = game.Players.LocalPlayer
         local char = plr.Character
         if not char then return end
 
@@ -254,11 +249,10 @@ tab3:CreateToggle({
 
         local swingEvent = GetSwingEvent()
         if not swingEvent then
-            warn("No swing accessory found!")
+            warn("No swing RemoteEvent found in character!")
             return
         end
 
-        -- wait for workspace.enemies to exist
         local enemiesFolder = workspace:WaitForChild("enemies", 30)
         if not enemiesFolder then
             warn("workspace.enemies never appeared!")
@@ -295,10 +289,10 @@ tab3:CreateToggle({
                 if not currentChar then break end
 
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
-                local lookAt = CFrame.lookAt(targetPos, hrp.Position)
+                local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
                 task.wait()
             end
         until not _G.FarmEnemies
-    end
+    end,
 })
