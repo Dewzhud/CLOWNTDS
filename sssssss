@@ -133,6 +133,44 @@ tab2:CreateToggle({
         local plr = game.Players.LocalPlayer
         local char = plr.Character
         if not char then return end
+        local backpack = plr.Backpack:GetChildren()
+
+            local function getskill()
+                local table = {}
+                for _, skill in pairs(backpack) do
+                    if skill:IsA("Tool") and skill:WaitForChild('spellEvent') then
+                        table.insert(table,skill)
+                            if #table == 2 then
+                                    break
+                            end                        
+                        return table[1] , table[2] 
+                    end
+
+                end
+            end
+
+            local skill1, skill2 = getskill()
+            while _G.Farm do
+               skill1:FireServer()
+                skill2:FireServer
+taskwait(4)
+            end
+        until not _G.Farm
+    end
+})
+
+-- ── AUTO DUNGEON (dungeon room enemyFolders) ─────────────────────────────────
+_G.Farm = false
+tab2:CreateToggle({
+    name = "Auto Dungeon",
+    value = false,
+    callback = function(value)
+        _G.Farm = value
+        if not value then return end
+
+        local plr = game.Players.LocalPlayer
+        local char = plr.Character
+        if not char then return end
 
         char.HumanoidRootPart.Anchored = false
 
