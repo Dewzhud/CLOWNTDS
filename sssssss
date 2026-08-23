@@ -114,7 +114,7 @@ local function GetSwingEvent()
     local char = game.Players.LocalPlayer.Character
     if not char then return nil end
     for _, v in pairs(char:GetDescendants()) do
-        if v:IsA("Bindable Event") and v.Name == "swing" then
+        if v:IsA("RemoteEvent") and v.Name == "swing" then
             return v
         end
     end
