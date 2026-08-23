@@ -18,17 +18,20 @@ local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 
 -- ── SHARED STATE ──────────────────────────────────────────────────────────────
 
-local StageName = "Desert Temple"
-local Difficult  = "Easy"
-_G.IsHc          = false
-_G.AutoRoom      = false
-_G.AutoRejoin    = false
-_G.Farm          = false
-_G.FarmEnemies   = false
+local StageName      = "Desert Temple"
+local Difficult      = "Easy"
+local SkillCooldown  = 4  -- seconds between skill fires (adjustable via slider)
+
+_G.IsHc        = false
+_G.AutoRoom    = false
+_G.AutoRejoin  = false
+_G.Farm        = false
+_G.FarmEnemies = false
+_G.AutoSkill   = false
 
 -- ── SHARED HELPERS ────────────────────────────────────────────────────────────
 
--- Returns the first "swing" RemoteEvent found inside the local character
+-- Returns the "swing" RemoteEvent from the local character
 local function GetSwingEvent()
     local char = game.Players.LocalPlayer.Character
     if not char then return nil end
@@ -38,6 +41,22 @@ local function GetSwingEvent()
         end
     end
     return nil
+end
+
+-- Returns up to 2 spellEvent RemoteEvents from tools in the backpack
+local function GetSkillEvents()
+    local plr    = game.Players.LocalPlayer
+    local events = {}
+    for _, tool in pairs(plr.Backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local spell = tool:FindFirstChild("spellEvent")
+            if spell and spell:IsA("RemoteEvent") then
+                table.insert(events, spell)
+                if #events == 2 then break end
+            end
+        end
+    end
+    return events[1], events[2]
 end
 
 -- ── TAB 1 – ROOM ─────────────────────────────────────────────────────────────
@@ -123,6 +142,43 @@ tab:CreateToggle({
 
 -- ── TAB 2 – DUNGEON ───────────────────────────────────────────────────────────
 
+-- Skill cooldown slider (controls Auto Skill and the skill fires inside Auto Dungeon)
+tab2:CreateSlider({
+    name     = "Skill Cooldown (seconds)",
+    min      = 1,
+    max      = 15,
+    value    = 4,
+    callback = function(value)
+        SkillCooldown = value
+    end,
+})
+
+-- Auto Skill: fires both skill events on repeat, independent of dungeon farming
+tab2:CreateToggle({
+    name     = "Auto Skill",
+    value    = false,
+    callback = function(value)
+        _G.AutoSkill = value
+        if not value then return end
+
+        task.spawn(function()
+            while _G.AutoSkill do
+                local skill1, skill2 = GetSkillEvents()
+
+                if skill1 then skill1:FireServer() end
+
+                -- stagger skill2 slightly so they don't fire simultaneously
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+
+                task.wait(SkillCooldown)
+            end
+        end)
+    end,
+})
+
 tab2:CreateToggle({
     name     = "Auto Dungeon",
     value    = false,
@@ -136,7 +192,6 @@ tab2:CreateToggle({
 
         char.HumanoidRootPart.Anchored = false
 
-        -- Click start button if it exists
         local startButton = plr.PlayerGui:WaitForChild("startButton", 3)
         if startButton then
             game:GetService("ReplicatedStorage").remotes.changeStartValue:FireServer()
@@ -146,34 +201,6 @@ tab2:CreateToggle({
         if not Dun then
             warn("Dungeon folder never appeared!")
             return
-        end
-
-        -- FIX: Get first skill RemoteEvent (spellEvent) from backpack
-        local function GetSkillEvent()
-            for _, tool in pairs(plr.Backpack:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local spell = tool:FindFirstChild("spellEvent")
-                    if spell and spell:IsA("RemoteEvent") then
-                        return spell
-                    end
-                end
-            end
-            return nil
-        end
-
-        -- FIX: Get second skill RemoteEvent from backpack (skip the first one)
-        local function GetSkillEvents()
-            local events = {}
-            for _, tool in pairs(plr.Backpack:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local spell = tool:FindFirstChild("spellEvent")
-                    if spell and spell:IsA("RemoteEvent") then
-                        table.insert(events, spell)
-                        if #events == 2 then break end
-                    end
-                end
-            end
-            return events[1], events[2]
         end
 
         local function GetMon()
@@ -194,22 +221,29 @@ tab2:CreateToggle({
             return nil, nil
         end
 
-        local swingEvent        = GetSwingEvent()
-        local skill1, skill2    = GetSkillEvents()
-
+        local swingEvent = GetSwingEvent()
         if not swingEvent then
             warn("No swing RemoteEvent found in character!")
             return
         end
 
+        -- Skill fire loop runs in parallel so it respects SkillCooldown independently
+        task.spawn(function()
+            while _G.Farm do
+                local skill1, skill2 = GetSkillEvents()
+                if skill1 then skill1:FireServer() end
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+                task.wait(SkillCooldown)
+            end
+        end)
+
         repeat
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then continue end
-
-            -- FIX: Fire skill events properly with ()
-            if skill1 then skill1:FireServer() end
-            if skill2 then skill2:FireServer() end
 
             while _G.Farm do
                 swingEvent:FireServer()
@@ -270,6 +304,19 @@ tab3:CreateToggle({
             end
             return nil, nil
         end
+
+        -- Skill fire loop runs in parallel for enemies tab too
+        task.spawn(function()
+            while _G.FarmEnemies do
+                local skill1, skill2 = GetSkillEvents()
+                if skill1 then skill1:FireServer() end
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+                task.wait(SkillCooldown)
+            end
+        end)
 
         repeat
             task.wait()
