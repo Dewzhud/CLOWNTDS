@@ -3,7 +3,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
 local window = Rayfield:CreateWindow({
-    name     = "WANDA 1",
+    name     = "WANDA",
     subtitle = "DQR",
     configuration = {
         autoSave     = true,
@@ -38,7 +38,22 @@ _G.AutoSkill   = false
 --   teleports (looking down at a mob) never build up enough spin to fling.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local RunService = game:GetService("RunService")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--   KEY PRESS HELPER
+--   Simulates a real keydown + keyup so the game's InputBegan fires normally.
+--   Works the same way a player pressing the key would.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local function PressKey(keyCode, holdTime)
+    holdTime = holdTime or 0.08
+    VirtualInputManager:SendKeyEvent(true,  keyCode, false, game)
+    task.wait(holdTime)
+    VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+end
 
 local AntiFling = {
     MaxAngularVelocity       = 2.5,   -- rad/s max spin
@@ -269,9 +284,11 @@ tab2:CreateToggle({
 
         task.spawn(function()
             while _G.AutoSkill do
-                local skill1, skill2 = GetSkillEvents()
-                if skill1 then skill1:FireServer() end
-                if skill2 then task.wait(0.1); skill2:FireServer() end
+                -- Press E (skill 1)
+                PressKey(Enum.KeyCode.E)
+                task.wait(0.1)
+                -- Press Q (skill 2)
+                PressKey(Enum.KeyCode.Q)
                 task.wait(SkillCooldown)
             end
         end)
@@ -322,12 +339,12 @@ tab2:CreateToggle({
         local swingEvent = GetSwingEvent()
         if not swingEvent then warn("No swing RemoteEvent found!") return end
 
-        -- Skill loop (parallel)
+        -- Skill loop (parallel) — presses E then Q like a real player
         task.spawn(function()
             while _G.Farm do
-                local skill1, skill2 = GetSkillEvents()
-                if skill1 then skill1:FireServer() end
-                if skill2 then task.wait(0.1); skill2:FireServer() end
+                PressKey(Enum.KeyCode.E)
+                task.wait(0.1)
+                PressKey(Enum.KeyCode.Q)
                 task.wait(SkillCooldown)
             end
         end)
@@ -398,12 +415,12 @@ tab3:CreateToggle({
             return nil, nil
         end
 
-        -- Skill loop (parallel)
+        -- Skill loop (parallel) — presses E then Q like a real player
         task.spawn(function()
             while _G.FarmEnemies do
-                local skill1, skill2 = GetSkillEvents()
-                if skill1 then skill1:FireServer() end
-                if skill2 then task.wait(0.1); skill2:FireServer() end
+                PressKey(Enum.KeyCode.E)
+                task.wait(0.1)
+                PressKey(Enum.KeyCode.Q)
                 task.wait(SkillCooldown)
             end
         end)
