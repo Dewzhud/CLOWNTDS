@@ -1,17 +1,14 @@
 loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/asf"))()
 
-
-
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
-
 local window = Rayfield:CreateWindow({
-    name = "WANDA",
+    name     = "WANDA 1",
     subtitle = "DQR",
     configuration = {
-        autoSave = true,
-        autoLoad = true,
-        fileName = "WD_DQR",
+        autoSave     = true,
+        autoLoad     = true,
+        fileName     = "WD_DQR",
         customFolder = "WD",
     },
 })
@@ -20,11 +17,13 @@ local tab  = window:CreateTab({ name = "Room",    icon = 93364949241311 })
 local tab2 = window:CreateTab({ name = "Dungeon", icon = 93364949241311 })
 local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 
--- ── SHARED STATE ──────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+--   SHARED STATE
+-- ─────────────────────────────────────────────────────────────────────────────
 
-local StageName      = "Desert Temple"
-local Difficult      = "Easy"
-local SkillCooldown  = 4  -- seconds between skill fires (adjustable via slider)
+local StageName     = "Desert Temple"
+local Difficult     = "Easy"
+local SkillCooldown = 4
 
 _G.IsHc        = false
 _G.AutoRoom    = false
@@ -33,21 +32,89 @@ _G.Farm        = false
 _G.FarmEnemies = false
 _G.AutoSkill   = false
 
--- ── SHARED HELPERS ────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+--   ANTI SELF-FLING
+--   Clamps angular & linear velocity every Heartbeat so rapid CFrame
+--   teleports (looking down at a mob) never build up enough spin to fling.
+-- ─────────────────────────────────────────────────────────────────────────────
 
--- Returns the "swing" RemoteEvent from the local character
+local RunService = game:GetService("RunService")
+
+local AntiFling = {
+    MaxAngularVelocity       = 2.5,   -- rad/s max spin
+    MaxLinearVelocity        = 80,    -- studs/s max horizontal speed
+    AirborneVelocityThreshold = 60,   -- studs/s airborne hard-reset threshold
+    CheckInterval            = 0.05,  -- seconds between checks
+}
+
+local _afLastCheck  = 0
+local _afResetting  = false
+local _afChar       = nil  -- updated on each spawn (see CharacterAdded below)
+
+local function _afClampVec(v, maxMag)
+    return v.Magnitude > maxMag and v.Unit * maxMag or v
+end
+
+local function _afTick(dt)
+    _afLastCheck += dt
+    if _afLastCheck < AntiFling.CheckInterval then return end
+    _afLastCheck = 0
+
+    local char = _afChar
+    if not char or not char.Parent then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
+
+    -- 1) Clamp angular velocity (the rotation-fling culprit)
+    local av = hrp.AssemblyAngularVelocity
+    if av.Magnitude > AntiFling.MaxAngularVelocity then
+        hrp.AssemblyAngularVelocity = _afClampVec(av, AntiFling.MaxAngularVelocity)
+    end
+
+    -- 2) Clamp horizontal linear velocity (preserve Y so jumping still works)
+    local lv   = hrp.AssemblyLinearVelocity
+    local flat = Vector3.new(lv.X, 0, lv.Z)
+    if flat.Magnitude > AntiFling.MaxLinearVelocity then
+        local cf = _afClampVec(flat, AntiFling.MaxLinearVelocity)
+        hrp.AssemblyLinearVelocity = Vector3.new(cf.X, lv.Y, cf.Z)
+    end
+
+    -- 3) Airborne hard-reset for extreme mid-air velocity
+    local grounded = hum.FloorMaterial ~= Enum.Material.Air
+    if not grounded and lv.Magnitude > AntiFling.AirborneVelocityThreshold and not _afResetting then
+        _afResetting = true
+        hrp.AssemblyLinearVelocity  = Vector3.new(0, math.min(lv.Y, 20), 0)
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        task.delay(0.2, function() _afResetting = false end)
+    end
+end
+
+RunService.Heartbeat:Connect(function(dt)
+    pcall(_afTick, dt)
+end)
+
+-- Keep _afChar in sync with respawns
+game.Players.LocalPlayer.CharacterAdded:Connect(function(c)
+    _afChar = c
+    _afResetting = false
+end)
+_afChar = game.Players.LocalPlayer.Character  -- grab current character right now
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--   SHARED HELPERS
+-- ─────────────────────────────────────────────────────────────────────────────
+
 local function GetSwingEvent()
     local char = game.Players.LocalPlayer.Character
     if not char then return nil end
     for _, v in pairs(char:GetDescendants()) do
-        if v:IsA("RemoteEvent") and v.Name == "swing" then
-            return v
-        end
+        if v:IsA("RemoteEvent") and v.Name == "swing" then return v end
     end
     return nil
 end
 
--- Returns up to 2 spellEvent RemoteEvents from tools in the backpack
 local function GetSkillEvents()
     local plr    = game.Players.LocalPlayer
     local events = {}
@@ -63,7 +130,51 @@ local function GetSkillEvents()
     return events[1], events[2]
 end
 
--- ── TAB 1 – ROOM ─────────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+--   SAFE TELEPORT HELPER
+--   • Teleports above the mob and faces straight DOWN (no sideways tilt)
+--   • Anchors the HRP for exactly one frame so physics can't build up
+--     velocity during the CFrame write, then immediately un-anchors.
+--   • Returns false and does nothing if the mob/hrp is gone.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local function SafeTeleportToMob(mob, heightOffset)
+    heightOffset = heightOffset or 7
+
+    local mobHRP = mob and mob:FindFirstChild("HumanoidRootPart")
+    if not mobHRP then return false end
+
+    local head = mob:FindFirstChild("Head")
+    if not head or head.Transparency == 1 then return false end
+
+    local char = game.Players.LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    -- Position: above the mob
+    local targetPos = mobHRP.Position + Vector3.new(0, heightOffset, 0)
+
+    -- Face straight down at the mob — no lateral tilt = no spin-up
+    -- CFrame.lookAt(eye, target) points the -Z axis toward target.
+    -- We want to look DOWN so eye is above, target is the mob's root.
+    local newCF = CFrame.lookAt(targetPos, mobHRP.Position)
+
+    -- Anchor → write CFrame → zero velocities → un-anchor (one-frame window)
+    hrp.Anchored = true
+    hrp.CFrame   = newCF
+
+    -- Kill any residual velocity the engine may have accumulated
+    hrp.AssemblyLinearVelocity  = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+
+    hrp.Anchored = false
+    return true
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--   TAB 1 – ROOM
+-- ─────────────────────────────────────────────────────────────────────────────
 
 tab:CreateDropdown({
     name        = "Stage",
@@ -74,9 +185,7 @@ tab:CreateDropdown({
         "King's Castle", "The Underworld", "Samurai Palace",
         "The Canals", "Ghastly Harbor", "Steampunk Sewers", "Orbital Outpost"
     },
-    callback = function(value)
-        StageName = value
-    end,
+    callback = function(value) StageName = value end,
 })
 
 tab:CreateDropdown({
@@ -84,17 +193,13 @@ tab:CreateDropdown({
     multiSelect = false,
     value       = { "Easy" },
     options     = { "Easy", "Medium", "Hard", "Insane", "Nightmare" },
-    callback = function(value)
-        Difficult = value
-    end,
+    callback = function(value) Difficult = value end,
 })
 
 tab:CreateToggle({
     name     = "Hardcore",
     value    = false,
-    callback = function(value)
-        _G.IsHc = value
-    end,
+    callback = function(value) _G.IsHc = value end,
 })
 
 tab:CreateToggle({
@@ -136,7 +241,6 @@ tab:CreateToggle({
             if not _G.AutoRejoin then return end
 
             task.wait(3)
-
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
@@ -144,20 +248,18 @@ tab:CreateToggle({
     end,
 })
 
--- ── TAB 2 – DUNGEON ───────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+--   TAB 2 – DUNGEON
+-- ─────────────────────────────────────────────────────────────────────────────
 
--- Skill cooldown slider (controls Auto Skill and the skill fires inside Auto Dungeon)
 tab2:CreateSlider({
     name     = "Skill Cooldown (seconds)",
     min      = 1,
     max      = 15,
     value    = 4,
-    callback = function(value)
-        SkillCooldown = value
-    end,
+    callback = function(value) SkillCooldown = value end,
 })
 
--- Auto Skill: fires both skill events on repeat, independent of dungeon farming
 tab2:CreateToggle({
     name     = "Auto Skill",
     value    = false,
@@ -168,15 +270,8 @@ tab2:CreateToggle({
         task.spawn(function()
             while _G.AutoSkill do
                 local skill1, skill2 = GetSkillEvents()
-
                 if skill1 then skill1:FireServer() end
-
-                -- stagger skill2 slightly so they don't fire simultaneously
-                if skill2 then
-                    task.wait(0.1)
-                    skill2:FireServer()
-                end
-
+                if skill2 then task.wait(0.1); skill2:FireServer() end
                 task.wait(SkillCooldown)
             end
         end)
@@ -202,14 +297,13 @@ tab2:CreateToggle({
         end
 
         local Dun = workspace:WaitForChild("dungeon", 30)
-        if not Dun then
-            warn("Dungeon folder never appeared!")
-            return
-        end
+        if not Dun then warn("Dungeon folder never appeared!") return end
 
         local function GetMon()
             for _, room in pairs(Dun:GetChildren()) do
-                if (room:IsA("Model") or room:IsA("Folder")) and string.match(room.Name:lower(), "room") then
+                if (room:IsA("Model") or room:IsA("Folder"))
+                    and string.match(room.Name:lower(), "room")
+                then
                     local EF = room:FindFirstChild("enemyFolder")
                     if not EF then continue end
                     for _, mob in pairs(EF:GetChildren()) do
@@ -226,51 +320,52 @@ tab2:CreateToggle({
         end
 
         local swingEvent = GetSwingEvent()
-        if not swingEvent then
-            warn("No swing RemoteEvent found in character!")
-            return
-        end
+        if not swingEvent then warn("No swing RemoteEvent found!") return end
 
-        -- Skill fire loop runs in parallel so it respects SkillCooldown independently
+        -- Skill loop (parallel)
         task.spawn(function()
             while _G.Farm do
                 local skill1, skill2 = GetSkillEvents()
                 if skill1 then skill1:FireServer() end
-                if skill2 then
-                    task.wait(0.1)
-                    skill2:FireServer()
-                end
+                if skill2 then task.wait(0.1); skill2:FireServer() end
                 task.wait(SkillCooldown)
             end
         end)
 
+        -- Main attack loop
         repeat
             task.wait()
-            local mob, root = GetMon()
-            if not mob or not root then continue end
+
+            local mob, _ = GetMon()
+            -- ── FIX: no mob found → idle safely, don't touch CFrame ──
+            if not mob then continue end
 
             while _G.Farm do
-                swingEvent:FireServer()
-
+                -- Check mob is still alive before doing anything
                 local head = mob:FindFirstChild("Head")
                 if not head or head.Transparency == 1 then break end
 
-                local hrp = mob:FindFirstChild("HumanoidRootPart")
-                if not hrp then break end
+                local mobHRP = mob:FindFirstChild("HumanoidRootPart")
+                if not mobHRP then break end
 
                 local currentChar = plr.Character
                 if not currentChar then break end
 
-                local targetPos = hrp.Position + Vector3.new(0, 7, 0)
-                local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
-                currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
+                -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
+                -- HEIGHT OFFSET 7 = above mob, facing straight down
+                local ok = SafeTeleportToMob(mob, 7)
+                if not ok then break end  -- mob died mid-frame, stop attacking it
+
+                swingEvent:FireServer()
                 task.wait()
             end
         until not _G.Farm
     end,
 })
 
--- ── TAB 3 – ENEMIES ──────────────────────────────────────────────────────────
+-- ─────────────────────────────────────────────────────────────────────────────
+--   TAB 3 – ENEMIES
+-- ─────────────────────────────────────────────────────────────────────────────
 
 tab3:CreateToggle({
     name     = "Auto Enemies",
@@ -286,16 +381,10 @@ tab3:CreateToggle({
         char.HumanoidRootPart.Anchored = false
 
         local swingEvent = GetSwingEvent()
-        if not swingEvent then
-            warn("No swing RemoteEvent found in character!")
-            return
-        end
+        if not swingEvent then warn("No swing RemoteEvent found!") return end
 
         local enemiesFolder = workspace:WaitForChild("enemies", 30)
-        if not enemiesFolder then
-            warn("workspace.enemies never appeared!")
-            return
-        end
+        if not enemiesFolder then warn("workspace.enemies never appeared!") return end
 
         local function GetMon()
             for _, mob in pairs(enemiesFolder:GetChildren()) do
@@ -309,39 +398,40 @@ tab3:CreateToggle({
             return nil, nil
         end
 
-        -- Skill fire loop runs in parallel for enemies tab too
+        -- Skill loop (parallel)
         task.spawn(function()
             while _G.FarmEnemies do
                 local skill1, skill2 = GetSkillEvents()
                 if skill1 then skill1:FireServer() end
-                if skill2 then
-                    task.wait(0.1)
-                    skill2:FireServer()
-                end
+                if skill2 then task.wait(0.1); skill2:FireServer() end
                 task.wait(SkillCooldown)
             end
         end)
 
+        -- Main attack loop
         repeat
             task.wait()
-            local mob, root = GetMon()
-            if not mob or not root then continue end
+
+            local mob, _ = GetMon()
+            -- ── FIX: no mob found → idle safely, don't touch CFrame ──
+            if not mob then continue end
 
             while _G.FarmEnemies do
-                swingEvent:FireServer()
-
                 local head = mob:FindFirstChild("Head")
                 if not head or head.Transparency == 1 then break end
 
-                local hrp = mob:FindFirstChild("HumanoidRootPart")
-                if not hrp then break end
+                local mobHRP = mob:FindFirstChild("HumanoidRootPart")
+                if not mobHRP then break end
 
                 local currentChar = plr.Character
                 if not currentChar then break end
 
-                local targetPos = hrp.Position + Vector3.new(0, 7.9, 0)
-                local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
-                currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
+                -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
+                -- HEIGHT OFFSET 7.9 = above mob, facing straight down
+                local ok = SafeTeleportToMob(mob, 7.9)
+                if not ok then break end  -- mob died mid-frame
+
+                swingEvent:FireServer()
                 task.wait()
             end
         until not _G.FarmEnemies
