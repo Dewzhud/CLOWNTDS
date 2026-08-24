@@ -247,7 +247,7 @@ tab2:CreateToggle({
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then 
-                task.wait(1) -- Delay when no mob found
+                char.HumanoidRootPart.Anchored = true
                 continue 
             end
 
@@ -272,7 +272,7 @@ tab2:CreateToggle({
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
                 local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
-                task.wait(0.1) -- Small delay after teleport
+                task.wait() -- Small delay after teleport
             end
         until not _G.Farm
     end,
@@ -345,7 +345,7 @@ return end
             end
 
             while _G.FarmEnemies do
- char.HumanoidRootPart.Anchored = false
+             char.HumanoidRootPart.Anchored = false
                 -- Anchor character with delay before teleporting
                 local currentChar = plr.Character
                 if currentChar and currentChar.HumanoidRootPart then
