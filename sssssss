@@ -255,9 +255,8 @@ tab2:CreateToggle({
                 -- Anchor character with delay before teleporting
                 local currentChar = plr.Character
                 if currentChar and currentChar.HumanoidRootPart then
-                    currentChar.HumanoidRootPart.Anchored = true
-                    task.wait(AnchorDelay) -- Wait before teleporting
-                    currentChar.HumanoidRootPart.Anchored = false
+                
+                    task.wait() -- Wait before teleporting
                 end
 
                 swingEvent:FireServer()
