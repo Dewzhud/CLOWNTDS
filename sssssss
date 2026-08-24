@@ -247,7 +247,7 @@ tab2:CreateToggle({
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then 
-                char.HumanoidRootPart.Anchored = true
+                char.HumanoidRootPart.Anchored = false
                 continue 
             end
 
