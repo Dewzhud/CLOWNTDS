@@ -1,8 +1,8 @@
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
-workspace.Gravity = 50
+
 
 local window = Rayfield:CreateWindow({
-    name = "WANDA v0.0.2",
+    name = "WANDA",
     subtitle = "DQR",
     configuration = {
         autoSave = true,
@@ -21,8 +21,6 @@ local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 local StageName      = "Desert Temple"
 local Difficult      = "Easy"
 local SkillCooldown  = 4  -- seconds between skill fires (adjustable via slider)
-local AnchorDelay    = 0.5 -- delay before anchoring character
-
 
 _G.IsHc        = false
 _G.AutoRoom    = false
@@ -103,10 +101,9 @@ tab:CreateToggle({
         while _G.AutoRoom do
             task.wait()
             local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
-          local dungeonProgress = workspace.Lobby.Map.Interactables.tutorialTravelTouchPart
             local GUi = playerGui:FindFirstChild("queueGui")
             if not GUi then continue end
-            if not dungeonProgress then continue end
+
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
@@ -246,19 +243,9 @@ tab2:CreateToggle({
         repeat
             task.wait()
             local mob, root = GetMon()
-            if not mob or not root then 
-                char.HumanoidRootPart.Anchored = false
-                continue 
-            end
+            if not mob or not root then continue end
 
             while _G.Farm do
-                -- Anchor character with delay before teleporting
-                local currentChar = plr.Character
-                if currentChar and currentChar.HumanoidRootPart then
-                
-                    task.wait() -- Wait before teleporting
-                end
-
                 swingEvent:FireServer()
 
                 local head = mob:FindFirstChild("Head")
@@ -267,11 +254,13 @@ tab2:CreateToggle({
                 local hrp = mob:FindFirstChild("HumanoidRootPart")
                 if not hrp then break end
 
-                -- Teleport to mob
+                local currentChar = plr.Character
+                if not currentChar then break end
+
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
                 local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
-                task.wait() -- Small delay after teleport
+                task.wait()
             end
         until not _G.Farm
     end,
@@ -284,11 +273,7 @@ tab3:CreateToggle({
     value    = false,
     callback = function(value)
         _G.FarmEnemies = value
-        if not value 
-then 
-
-                char.HumanoidRootPart.Anchored = false
-return end
+        if not value then return end
 
         local plr  = game.Players.LocalPlayer
         local char = plr.Character
@@ -336,21 +321,9 @@ return end
         repeat
             task.wait()
             local mob, root = GetMon()
-            if not mob or not root then 
-                 task.wait()
-                continue 
-            end
+            if not mob or not root then continue end
 
             while _G.FarmEnemies do
-             char.HumanoidRootPart.Anchored = false
-                -- Anchor character with delay before teleporting
-                local currentChar = plr.Character
-                if currentChar and currentChar.HumanoidRootPart then
-                    currentChar.HumanoidRootPart.Anchored = true
-                    task.wait(AnchorDelay) -- Wait before teleporting
-                    currentChar.HumanoidRootPart.Anchored = false
-                end
-
                 swingEvent:FireServer()
 
                 local head = mob:FindFirstChild("Head")
@@ -359,12 +332,13 @@ return end
                 local hrp = mob:FindFirstChild("HumanoidRootPart")
                 if not hrp then break end
 
-                -- Teleport to mob
+                local currentChar = plr.Character
+                if not currentChar then break end
+
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
                 local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
                 task.wait()
-               
             end
         until not _G.FarmEnemies
     end,
