@@ -101,9 +101,10 @@ tab:CreateToggle({
         while _G.AutoRoom do
             task.wait()
             local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
+          local dungeonProgress = workspace:WaitForChild("dungeonProgress")
             local GUi = playerGui:FindFirstChild("queueGui")
             if not GUi then continue end
-
+            if dungeonProgress then continue end
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
