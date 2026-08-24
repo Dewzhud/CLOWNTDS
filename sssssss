@@ -18,9 +18,12 @@ local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 
 -- ── SHARED STATE ──────────────────────────────────────────────────────────────
 
-local StageName      = "Desert Temple"
-local Difficult      = "Easy"
-local SkillCooldown  = 4  -- seconds between skill fires (adjustable via slider)
+local StageName     = "Desert Temple"
+local Difficult     = "Easy"
+local SkillCooldown = 4
+
+local TWEEN_DURATION  = 1.5   -- seconds for tween travel
+local TP_THRESHOLD    = 15    -- studs; closer than this → instant CFrame TP
 
 _G.IsHc        = false
 _G.AutoRoom    = false
@@ -31,7 +34,8 @@ _G.AutoSkill   = false
 
 -- ── SHARED HELPERS ────────────────────────────────────────────────────────────
 
--- Returns the "swing" RemoteEvent from the local character
+local TweenService = game:GetService("TweenService")
+
 local function GetSwingEvent()
     local char = game.Players.LocalPlayer.Character
     if not char then return nil end
@@ -43,7 +47,6 @@ local function GetSwingEvent()
     return nil
 end
 
--- Returns up to 2 spellEvent RemoteEvents from tools in the backpack
 local function GetSkillEvents()
     local plr    = game.Players.LocalPlayer
     local events = {}
@@ -57,6 +60,38 @@ local function GetSkillEvents()
         end
     end
     return events[1], events[2]
+end
+
+--[[
+    MoveToMob(hrp, targetHRP)
+    - If distance > TP_THRESHOLD : tween over TWEEN_DURATION seconds, then return
+    - If distance <= TP_THRESHOLD: instant CFrame TP
+    Both place the player slightly above and facing the mob.
+]]
+local function MoveToMob(hrp, targetHRP)
+    if not hrp or not targetHRP then return end
+
+    local targetPos = targetHRP.Position + Vector3.new(0, 7, 0)
+    local goalCF    = CFrame.lookAt(targetPos, targetHRP.Position)
+                      * CFrame.Angles(0, math.rad(5), 0)
+
+    local dist = (hrp.Position - targetHRP.Position).Magnitude
+
+    if dist > TP_THRESHOLD then
+        -- Tween toward the mob
+        local tweenInfo = TweenInfo.new(
+            TWEEN_DURATION,
+            Enum.EasingStyle.Linear,
+            Enum.EasingDirection.Out
+        )
+        local tween = TweenService:Create(hrp, tweenInfo, { CFrame = goalCF })
+        hrp.Anchored = false
+        tween:Play()
+        tween.Completed:Wait()
+    else
+        -- Already close: instant CFrame teleport
+        hrp.CFrame = goalCF
+    end
 end
 
 -- ── TAB 1 – ROOM ─────────────────────────────────────────────────────────────
@@ -100,14 +135,253 @@ tab:CreateToggle({
         _G.AutoRoom = value
         while _G.AutoRoom do
             task.wait()
-            local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
-          local dungeonProgress = workspace.Lobby.Map.Interactables.tutorialTravelTouchPart
-            local GUi = playerGui:FindFirstChild("queueGui")
+            local playerGui       = game:GetService("Players").LocalPlayer.PlayerGui
+            local dungeonProgress = workspace.Lobby.Map.Interactables.tutorialTravelTouchPart
+            local GUi             = playerGui:FindFirstChild("queueGui")
             if not GUi then continue end
             if not dungeonProgress then continue end
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
+            break
+        end
+    end,
+})
+
+local rejoinConnection = nil
+tab:CreateToggle({
+    name     = "Auto Rejoin",
+    value    = false,
+    callback = function(value)
+        _G.AutoRejoin = value
+
+        if rejoinConnection then
+            rejoinConnection:Disconnect()
+            rejoinConnection = nil
+        end
+
+        if not _G.AutoRejoin then return end
+
+        local dungeonProgress = workspace:WaitForChild("dungeonProgress")
+        rejoinConnection = dungeonProgress.Changed:Connect(function(newValue)
+            if newValue ~= "bossKilled" then return end
+            if not _G.AutoRejoin then return end
+
+            task.wait(3)
+
+            local remotes = game:GetService("ReplicatedStorage").remotes
+            remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
+            remotes.startDungeon:FireServer()
+        end)
+    end,
+})
+
+-- ── TAB 2 – DUNGEON ───────────────────────────────────────────────────────────
+
+tab2:CreateSlider({
+    name     = "Skill Cooldown (seconds)",
+    min      = 1,
+    max      = 15,
+    value    = 4,
+    callback = function(value)
+        SkillCooldown = value
+    end,
+})
+
+tab2:CreateToggle({
+    name     = "Auto Skill",
+    value    = false,
+    callback = function(value)
+        _G.AutoSkill = value
+        if not value then return end
+
+        task.spawn(function()
+            while _G.AutoSkill do
+                local skill1, skill2 = GetSkillEvents()
+                if skill1 then skill1:FireServer() end
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+                task.wait(SkillCooldown)
+            end
+        end)
+    end,
+})
+
+tab2:CreateToggle({
+    name     = "Auto Dungeon",
+    value    = false,
+    callback = function(value)
+        _G.Farm = value
+        if not value then return end
+
+        local plr  = game.Players.LocalPlayer
+        local char = plr.Character
+        if not char then return end
+
+        char.HumanoidRootPart.Anchored = false
+
+        local startButton = plr.PlayerGui:WaitForChild("startButton", 3)
+        if startButton then
+            game:GetService("ReplicatedStorage").remotes.changeStartValue:FireServer()
+        end
+
+        local Dun = workspace:WaitForChild("dungeon", 30)
+        if not Dun then
+            warn("Dungeon folder never appeared!")
+            return
+        end
+
+        local function GetMon()
+            for _, room in pairs(Dun:GetChildren()) do
+                if (room:IsA("Model") or room:IsA("Folder"))
+                    and string.match(room.Name:lower(), "room") then
+                    local EF = room:FindFirstChild("enemyFolder")
+                    if not EF then continue end
+                    for _, mob in pairs(EF:GetChildren()) do
+                        if mob:IsA("Model") then
+                            local head = mob:FindFirstChild("Head")
+                            if head and head.Transparency ~= 1 then
+                                return mob, mob:FindFirstChild("HumanoidRootPart")
+                            end
+                        end
+                    end
+                end
+            end
+            return nil, nil
+        end
+
+        local swingEvent = GetSwingEvent()
+        if not swingEvent then
+            warn("No swing RemoteEvent found in character!")
+            return
+        end
+
+        -- Parallel skill loop
+        task.spawn(function()
+            while _G.Farm do
+                local skill1, skill2 = GetSkillEvents()
+                if skill1 then skill1:FireServer() end
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+                task.wait(SkillCooldown)
+            end
+        end)
+
+        repeat
+            task.wait()
+            local mob, mobHRP = GetMon()
+            if not mob or not mobHRP then continue end
+
+            while _G.Farm do
+                -- Check mob still alive
+                local head = mob:FindFirstChild("Head")
+                if not head or head.Transparency == 1 then break end
+
+                local hrp = mob:FindFirstChild("HumanoidRootPart")
+                if not hrp then break end
+
+                local currentChar = plr.Character
+                if not currentChar then break end
+
+                local myHRP = currentChar:FindFirstChild("HumanoidRootPart")
+                if not myHRP then break end
+
+                -- Tween if far, TP if close
+                MoveToMob(myHRP, hrp)
+
+                -- Fire swing after arriving
+                swingEvent:FireServer()
+
+                task.wait()
+            end
+        until not _G.Farm
+    end,
+})
+
+-- ── TAB 3 – ENEMIES ──────────────────────────────────────────────────────────
+
+tab3:CreateToggle({
+    name     = "Auto Enemies",
+    value    = false,
+    callback = function(value)
+        _G.FarmEnemies = value
+        if not value then return end
+
+        local plr  = game.Players.LocalPlayer
+        local char = plr.Character
+        if not char then return end
+
+        char.HumanoidRootPart.Anchored = false
+
+        local swingEvent = GetSwingEvent()
+        if not swingEvent then
+            warn("No swing RemoteEvent found in character!")
+            return
+        end
+
+        local enemiesFolder = workspace:WaitForChild("enemies", 30)
+        if not enemiesFolder then
+            warn("workspace.enemies never appeared!")
+            return
+        end
+
+        local function GetMon()
+            for _, mob in pairs(enemiesFolder:GetChildren()) do
+                if mob:IsA("Model") then
+                    local head = mob:FindFirstChild("Head")
+                    if head and head.Transparency ~= 1 then
+                        return mob, mob:FindFirstChild("HumanoidRootPart")
+                    end
+                end
+            end
+            return nil, nil
+        end
+
+        -- Parallel skill loop
+        task.spawn(function()
+            while _G.FarmEnemies do
+                local skill1, skill2 = GetSkillEvents()
+                if skill1 then skill1:FireServer() end
+                if skill2 then
+                    task.wait(0.1)
+                    skill2:FireServer()
+                end
+                task.wait(SkillCooldown)
+            end
+        end)
+
+        repeat
+            task.wait()
+            local mob, mobHRP = GetMon()
+            if not mob or not mobHRP then continue end
+
+            while _G.FarmEnemies do
+                local head = mob:FindFirstChild("Head")
+                if not head or head.Transparency == 1 then break end
+
+                local hrp = mob:FindFirstChild("HumanoidRootPart")
+                if not hrp then break end
+
+                local currentChar = plr.Character
+                if not currentChar then break end
+
+                local myHRP = currentChar:FindFirstChild("HumanoidRootPart")
+                if not myHRP then break end
+
+                -- Tween if far, TP if close
+                MoveToMob(myHRP, hrp)
+
+                swingEvent:FireServer()
+
+                task.wait()
+            end
+        until not _G.FarmEnemies
+    end,
+})            remotes.startDungeon:FireServer()
             break
         end
     end,
