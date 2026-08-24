@@ -339,7 +339,6 @@ return end
             local mob, root = GetMon()
             if not mob or not root then 
                  task.wait()
-                
                 continue 
             end
 
