@@ -22,7 +22,7 @@ local StageName      = "Desert Temple"
 local Difficult      = "Easy"
 local SkillCooldown  = 4  -- seconds between skill fires (adjustable via slider)
 local AnchorDelay    = 0.5 -- delay before anchoring character
-local MobSearchDelay = 1   -- delay when no mob found
+
 
 _G.IsHc        = false
 _G.AutoRoom    = false
@@ -247,7 +247,7 @@ tab2:CreateToggle({
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then 
-                task.wait(MobSearchDelay) -- Delay when no mob found
+                task.wait(1) -- Delay when no mob found
                 continue 
             end
 
@@ -285,7 +285,11 @@ tab3:CreateToggle({
     value    = false,
     callback = function(value)
         _G.FarmEnemies = value
-        if not value then return end
+        if not value 
+then 
+
+                char.HumanoidRootPart.Anchored = false
+return end
 
         local plr  = game.Players.LocalPlayer
         local char = plr.Character
@@ -334,7 +338,10 @@ tab3:CreateToggle({
             task.wait()
             local mob, root = GetMon()
             if not mob or not root then 
+                 task.wait(1)
+                char.HumanoidRootPart.Anchored = false
                 task.wait(MobSearchDelay) -- Delay when no mob found
+                
                 continue 
             end
 
@@ -359,7 +366,8 @@ tab3:CreateToggle({
                 local targetPos = hrp.Position + Vector3.new(0, 7, 0)
                 local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
-                task.wait(0.1) -- Small delay after teleport
+                task.wait(1)
+                char.HumanoidRootPart.Anchored = true
             end
         until not _G.FarmEnemies
     end,
