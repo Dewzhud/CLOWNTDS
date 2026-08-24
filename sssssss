@@ -227,8 +227,8 @@ tab:CreateToggle({
             local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
 local tut = workspace.Map.Interactables:WaitForChild("tutorialTravelTouchPart")
             local GUi = playerGui:FindFirstChild("queueGui")
-            if not GUi or not tut then continue end
-
+            if not GUi then continue end
+if not tut then continue end
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
