@@ -359,7 +359,7 @@ tab3:CreateToggle({
                 local currentChar = plr.Character
                 if not currentChar then break end
 
-                local targetPos = hrp.Position + Vector3.new(0, 7, 0)
+                local targetPos = hrp.Position + Vector3.new(0, 7.9, 0)
                 local lookAt    = CFrame.lookAt(targetPos, hrp.Position)
                 currentChar.HumanoidRootPart.CFrame = lookAt * CFrame.Angles(0, math.rad(5), 0)
                 task.wait()
