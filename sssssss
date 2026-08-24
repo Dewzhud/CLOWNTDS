@@ -2,7 +2,7 @@ local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 workspace.Gravity = 50
 
 local window = Rayfield:CreateWindow({
-    name = "WANDA",
+    name = "WANDA v0.0.2",
     subtitle = "DQR",
     configuration = {
         autoSave = true,
