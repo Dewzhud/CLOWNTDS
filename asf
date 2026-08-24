@@ -1,0 +1,136 @@
+-- =============================================
+--   Anti Self-Fling Script
+--   Place in: StarterPlayerScripts or StarterCharacterScripts
+--   Author: LocalScript
+-- =============================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- =============================================
+--   CONFIGURATION (tweak these values)
+-- =============================================
+local Config = {
+    -- Max angular velocity (radians/sec) before we clamp it
+    MaxAngularVelocity = 2.5,
+
+    -- Max linear velocity before we clamp it (studs/sec)
+    MaxLinearVelocity = 80,
+
+    -- How often to check & clamp (seconds). Lower = more responsive but more CPU
+    CheckInterval = 0.05,
+
+    -- If the character is airborne AND velocity exceeds this, reset it
+    AirborneVelocityThreshold = 60,
+
+    -- Enable debug prints (set false in production)
+    Debug = false,
+}
+
+-- =============================================
+--   INTERNAL STATE
+-- =============================================
+local lastCheckTime = 0
+local isResetting = false
+
+-- =============================================
+--   UTILITY: Clamp a Vector3 to a max magnitude
+-- =============================================
+local function clampVector(vec, maxMag)
+    if vec.Magnitude > maxMag then
+        return vec.Unit * maxMag
+    end
+    return vec
+end
+
+-- =============================================
+--   MAIN ANTI-FLING FUNCTION
+-- =============================================
+local function preventSelfFling()
+    -- Safety: re-grab parts if character respawned
+    if not Character or not Character.Parent then return end
+
+    local hrp = Character:FindFirstChild("HumanoidRootPart")
+    local hum = Character:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+    if hum.Health <= 0 then return end  -- Don't touch dead characters
+
+    local assemblyVelocity = hrp.AssemblyLinearVelocity
+    local angularVelocity  = hrp.AssemblyAngularVelocity
+
+    local linearMag  = assemblyVelocity.Magnitude
+    local angularMag = angularVelocity.Magnitude
+
+    -- ---- Clamp Angular Velocity (rotation fling) ----
+    if angularMag > Config.MaxAngularVelocity then
+        if Config.Debug then
+            print(("[AntiFling] Clamping angular velocity: %.2f → %.2f"):format(angularMag, Config.MaxAngularVelocity))
+        end
+        hrp.AssemblyAngularVelocity = clampVector(angularVelocity, Config.MaxAngularVelocity)
+    end
+
+    -- ---- Clamp Linear Velocity (launch fling) ----
+    -- Preserve the Y axis so jumping still feels natural
+    local flatVelocity = Vector3.new(assemblyVelocity.X, 0, assemblyVelocity.Z)
+    if flatVelocity.Magnitude > Config.MaxLinearVelocity then
+        if Config.Debug then
+            print(("[AntiFling] Clamping linear velocity: %.2f → %.2f"):format(linearMag, Config.MaxLinearVelocity))
+        end
+        local clampedFlat = clampVector(flatVelocity, Config.MaxLinearVelocity)
+        hrp.AssemblyLinearVelocity = Vector3.new(clampedFlat.X, assemblyVelocity.Y, clampedFlat.Z)
+    end
+
+    -- ---- Extra: Airborne hard reset ----
+    -- If in the air and speed is extreme (e.g. hit by an exploit), zero it out
+    local isGrounded = hum.FloorMaterial ~= Enum.Material.Air
+    if not isGrounded and linearMag > Config.AirborneVelocityThreshold and not isResetting then
+        if Config.Debug then
+            print(("[AntiFling] Airborne fling detected (%.2f studs/s), resetting."):format(linearMag))
+        end
+        isResetting = true
+        -- Smoothly kill velocity instead of a hard snap
+        hrp.AssemblyLinearVelocity  = Vector3.new(0, math.min(assemblyVelocity.Y, 20), 0)
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        task.delay(0.2, function() isResetting = false end)
+    end
+end
+
+-- =============================================
+--   HEARTBEAT LOOP
+-- =============================================
+local connection
+connection = RunService.Heartbeat:Connect(function(dt)
+    lastCheckTime += dt
+    if lastCheckTime >= Config.CheckInterval then
+        lastCheckTime = 0
+        pcall(preventSelfFling)   -- pcall so errors never break the loop
+    end
+end)
+
+-- =============================================
+--   HANDLE CHARACTER RESPAWN
+-- =============================================
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    Character         = newChar
+    HumanoidRootPart  = newChar:WaitForChild("HumanoidRootPart")
+    Humanoid          = newChar:WaitForChild("Humanoid")
+    isResetting       = false
+    if Config.Debug then print("[AntiFling] Character respawned, references updated.") end
+end)
+
+-- =============================================
+--   CLEANUP on script removal
+-- =============================================
+script.Destroying:Connect(function()
+    if connection then connection:Disconnect() end
+end)
+
+if Config.Debug then
+    print("[AntiFling] Anti Self-Fling script loaded. Monitoring started.")
+end
