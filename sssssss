@@ -2,26 +2,6 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/Dewzhud/CLOWNTDS/refs
 
 
 
-
-Character = game.Players.LocalPlayer.Character
-HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
-Descendants = Character:GetDescendants()
-
-Mass = 0
-
-for i, v in ipairs(Descendants) do
-    if v:IsA("BasePart") then
-    Mass = Mass + v:GetMass()
-    end
-end
-
-local AntiGravity = Instance.new("BodyForce") do
-    AntiGravity.Force = Vector3.new(0, Mass*workspace.Gravity, 0)
-    AntiGravity.Parent = HumanoidRootPart
-end
-
-
-
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
 
