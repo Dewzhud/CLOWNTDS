@@ -1290,7 +1290,7 @@ if mob == "Demonic Pirate Captain " then break end
                     local ok =
                         SafeTeleportToMob(
                             mob,
-                            7.9
+                            9.7
                         )
 
                     if not ok then
