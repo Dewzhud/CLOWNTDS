@@ -170,14 +170,10 @@ local function SafeTeleportToMob(mob, heightOffset)
     -- Position: above the mob
     local targetPos = mobHRP.CFrame * CFrame.new(0, 9.5, 0)
 
-    -- Face straight down at the mob — no lateral tilt = no spin-up
-    -- CFrame.lookAt(eye, target) points the -Z axis toward target.
-    -- We want to look DOWN so eye is above, target is the mob's root.
-    local newCF = CFrame.lookAt(targetPos, mobHRP.Position)
 
     -- Anchor → write CFrame → zero velocities → un-anchor (one-frame window)
     hrp.Anchored = true
-    hrp.CFrame   = newCF
+    hrp.CFrame   = targetPos
 
     -- Kill any residual velocity the engine may have accumulated
     hrp.AssemblyLinearVelocity  = Vector3.zero
