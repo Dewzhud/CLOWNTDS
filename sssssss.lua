@@ -283,7 +283,14 @@ tab2:CreateToggle({
         end)
     end,
 })
-
+local high = 7
+tab2:CreateSlider({
+    name     = "Height (seconds)",
+    min      = 7,
+    max      = 15,
+    value    = 7,
+    callback = function(value) high = value end,
+})
 tab2:CreateToggle({
     name     = "Auto Dungeon",
     value    = false,
@@ -359,7 +366,7 @@ tab2:CreateToggle({
 
                 -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
                 -- HEIGHT OFFSET 7 = above mob, facing straight down
-                local ok = SafeTeleportToMob(mob,10)
+                local ok = SafeTeleportToMob(mob,high)
                 if not ok then break end  -- mob died mid-frame, stop attacking it
 
                 swingEvent:FireServer()
