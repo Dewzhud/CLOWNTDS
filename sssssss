@@ -154,7 +154,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function SafeTeleportToMob(mob, heightOffset)
-    heightOffset = heightOffset or 7
+    heightOffset = heightOffset or 8.5
 
     local mobHRP = mob and mob:FindFirstChild("HumanoidRootPart")
     if not mobHRP then return false end
