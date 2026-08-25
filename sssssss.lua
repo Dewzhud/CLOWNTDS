@@ -355,8 +355,8 @@ tab2:CreateToggle({
 
             while _G.Farm do
                 -- Check mob is still alive before doing anything
-                local head = mob:FindFirstChild("Head")
-                if not head or head.Transparency == 1 then break end
+                local head = mob:FindFirstChild("Humanoid")
+                if not head or head.Health == <1 then break end
 
                 local mobHRP = mob:FindFirstChild("HumanoidRootPart")
                 if not mobHRP then break end
