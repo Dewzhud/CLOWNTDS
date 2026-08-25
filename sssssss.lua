@@ -17,10 +17,6 @@ local tab  = window:CreateTab({ name = "Room",    icon = 93364949241311 })
 local tab2 = window:CreateTab({ name = "Dungeon", icon = 93364949241311 })
 local tab3 = window:CreateTab({ name = "Enemies", icon = 93364949241311 })
 
--- ─────────────────────────────────────────────────────────────────────────────
---   SHARED STATE
--- ─────────────────────────────────────────────────────────────────────────────
-
 local StageName     = "Desert Temple"
 local Difficult     = "Easy"
 local SkillCooldown = 4
@@ -32,21 +28,9 @@ _G.Farm        = false
 _G.FarmEnemies = false
 _G.AutoSkill   = false
 
--- ─────────────────────────────────────────────────────────────────────────────
---   ANTI SELF-FLING
---   Clamps angular & linear velocity every Heartbeat so rapid CFrame
---   teleports (looking down at a mob) never build up enough spin to fling.
--- ─────────────────────────────────────────────────────────────────────────────
-
-local RunService        = game:GetService("RunService")
-local UserInputService  = game:GetService("UserInputService")
+local RunService          = game:GetService("RunService")
+local UserInputService    = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-
--- ─────────────────────────────────────────────────────────────────────────────
---   KEY PRESS HELPER
---   Simulates a real keydown + keyup so the game's InputBegan fires normally.
---   Works the same way a player pressing the key would.
--- ─────────────────────────────────────────────────────────────────────────────
 
 local function PressKey(keyCode, holdTime)
     holdTime = holdTime or 0.08
@@ -56,15 +40,15 @@ local function PressKey(keyCode, holdTime)
 end
 
 local AntiFling = {
-    MaxAngularVelocity       = 2.5,   -- rad/s max spin
-    MaxLinearVelocity        = 80,    -- studs/s max horizontal speed
-    AirborneVelocityThreshold = 60,   -- studs/s airborne hard-reset threshold
-    CheckInterval            = 0.05,  -- seconds between checks
+    MaxAngularVelocity        = 2.5,
+    MaxLinearVelocity         = 80,
+    AirborneVelocityThreshold = 60,
+    CheckInterval             = 0.05,
 }
 
-local _afLastCheck  = 0
-local _afResetting  = false
-local _afChar       = nil  -- updated on each spawn (see CharacterAdded below)
+local _afLastCheck = 0
+local _afResetting = false
+local _afChar      = nil
 
 local function _afClampVec(v, maxMag)
     return v.Magnitude > maxMag and v.Unit * maxMag or v
@@ -82,13 +66,11 @@ local function _afTick(dt)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then return end
 
-    -- 1) Clamp angular velocity (the rotation-fling culprit)
     local av = hrp.AssemblyAngularVelocity
     if av.Magnitude > AntiFling.MaxAngularVelocity then
         hrp.AssemblyAngularVelocity = _afClampVec(av, AntiFling.MaxAngularVelocity)
     end
 
-    -- 2) Clamp horizontal linear velocity (preserve Y so jumping still works)
     local lv   = hrp.AssemblyLinearVelocity
     local flat = Vector3.new(lv.X, 0, lv.Z)
     if flat.Magnitude > AntiFling.MaxLinearVelocity then
@@ -96,7 +78,6 @@ local function _afTick(dt)
         hrp.AssemblyLinearVelocity = Vector3.new(cf.X, lv.Y, cf.Z)
     end
 
-    -- 3) Airborne hard-reset for extreme mid-air velocity
     local grounded = hum.FloorMaterial ~= Enum.Material.Air
     if not grounded and lv.Magnitude > AntiFling.AirborneVelocityThreshold and not _afResetting then
         _afResetting = true
@@ -110,12 +91,11 @@ RunService.Heartbeat:Connect(function(dt)
     pcall(_afTick, dt)
 end)
 
--- Keep _afChar in sync with respawns
 game.Players.LocalPlayer.CharacterAdded:Connect(function(c)
     _afChar = c
     _afResetting = false
 end)
-_afChar = game.Players.LocalPlayer.Character  -- grab current character right now
+_afChar = game.Players.LocalPlayer.Character
 
 -- ─────────────────────────────────────────────────────────────────────────────
 --   SHARED HELPERS
@@ -130,27 +110,20 @@ local function GetSwingEvent()
     return nil
 end
 
-local function GetSkillEvents()
-    local plr    = game.Players.LocalPlayer
-    local events = {}
-    for _, tool in pairs(plr.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            local spell = tool:FindFirstChild("spellEvent")
-            if spell and spell:IsA("RemoteEvent") then
-                table.insert(events, spell)
-                if #events == 2 then break end
-            end
-        end
-    end
-    return events[1], events[2]
+-- ─────────────────────────────────────────────────────────────────────────────
+--   IS MOB ALIVE — health check only
+-- ─────────────────────────────────────────────────────────────────────────────
+
+local function IsMobAlive(mob)
+    if not mob or not mob.Parent then return false end
+    local hum = mob:FindFirstChildOfClass("Humanoid")
+             or mob:FindFirstChild("Humanoid", true)
+    if not hum or hum.Health <= 0 then return false end
+    return true
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 --   SAFE TELEPORT HELPER
---   • Teleports above the mob and faces straight DOWN (no sideways tilt)
---   • Anchors the HRP for exactly one frame so physics can't build up
---     velocity during the CFrame write, then immediately un-anchors.
---   • Returns false and does nothing if the mob/hrp is gone.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function SafeTeleportToMob(mob, heightOffset)
@@ -160,13 +133,10 @@ local function SafeTeleportToMob(mob, heightOffset)
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
 
-        local mobHead = mob and mob:FindFirstChild("Head", true)
-        if not mobHead or not mobHead.Parent then return false end
+        if not IsMobAlive(mob) then return false end
 
-        -- health check only
-        local hum = mob:FindFirstChildOfClass("Humanoid")
-               or mob:FindFirstChild("Humanoid", true)
-        if not hum or hum.Health <= 0 then return false end
+        local mobHead = mob:FindFirstChild("Head", true)
+        if not mobHead or not mobHead.Parent then return false end
 
         local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 8, 0)
 
@@ -180,6 +150,7 @@ local function SafeTeleportToMob(mob, heightOffset)
 
     return success and result == true
 end
+
 -- ─────────────────────────────────────────────────────────────────────────────
 --   TAB 1 – ROOM
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -220,7 +191,7 @@ tab:CreateToggle({
             local playerGui = game:GetService("Players").LocalPlayer.PlayerGui
             local GUi = playerGui:FindFirstChild("queueGui")
             if not GUi then continue end
-if not workspace.Map:FindFirstChild("Interactables"):WaitForChild("tutorialTravelTouchPart") then continue end
+            if not workspace.Map:FindFirstChild("Interactables"):WaitForChild("tutorialTravelTouchPart") then continue end
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
             remotes.startDungeon:FireServer()
@@ -247,7 +218,6 @@ tab:CreateToggle({
         rejoinConnection = dungeonProgress.Changed:Connect(function(newValue)
             if newValue ~= "bossKilled" then return end
             if not _G.AutoRejoin then return end
-
             task.wait(3)
             local remotes = game:GetService("ReplicatedStorage").remotes
             remotes.createLobby:InvokeServer(StageName, Difficult, 0, _G.IsHc, false, false)
@@ -274,27 +244,26 @@ tab2:CreateToggle({
     callback = function(value)
         _G.AutoSkill = value
         if not value then return end
-
         task.spawn(function()
             while _G.AutoSkill do
-                -- Press E (skill 1)
                 PressKey(Enum.KeyCode.E)
                 task.wait(0.1)
-                -- Press Q (skill 2)
                 PressKey(Enum.KeyCode.Q)
                 task.wait(SkillCooldown)
             end
         end)
     end,
 })
+
 local high = 7
 tab2:CreateSlider({
-    name     = "Height (seconds)",
+    name     = "Height",
     min      = 7,
     max      = 15,
     value    = 7,
     callback = function(value) high = value end,
 })
+
 tab2:CreateToggle({
     name     = "Auto Dungeon",
     value    = false,
@@ -316,31 +285,26 @@ tab2:CreateToggle({
         local Dun = workspace:WaitForChild("dungeon", 30)
         if not Dun then warn("Dungeon folder never appeared!") return end
 
-      local function GetMon()
-    for _, room in pairs(Dun:GetChildren()) do
-        if (room:IsA("Model") or room:IsA("Folder"))
-            and string.match(room.Name:lower(), "room")
-        then
-            local EF = room:FindFirstChild("enemyFolder")
-            if not EF then continue end
-            for _, mob in pairs(EF:GetChildren()) do
-                if mob:IsA("Model") then
-                    local hum = mob:FindFirstChildOfClass("Humanoid")
-                             or mob:FindFirstChild("Humanoid", true)
-                    if hum and hum.Health > 0 then
-                        return mob, mob:FindFirstChild("HumanoidRootPart")
+        local function GetMon()
+            for _, room in pairs(Dun:GetChildren()) do
+                if (room:IsA("Model") or room:IsA("Folder"))
+                    and string.match(room.Name:lower(), "room")
+                then
+                    local EF = room:FindFirstChild("enemyFolder")
+                    if not EF then continue end
+                    for _, mob in pairs(EF:GetChildren()) do
+                        if mob:IsA("Model") and IsMobAlive(mob) then
+                            return mob, mob:FindFirstChild("HumanoidRootPart", true)
+                        end
                     end
                 end
             end
+            return nil, nil
         end
-    end
-    return nil, nil
-end
 
         local swingEvent = GetSwingEvent()
         if not swingEvent then warn("No swing RemoteEvent found!") return end
 
-        -- Skill loop (parallel) — presses E then Q like a real player
         task.spawn(function()
             while _G.Farm do
                 PressKey(Enum.KeyCode.E)
@@ -350,29 +314,20 @@ end
             end
         end)
 
-        -- Main attack loop
         repeat
             task.wait()
-
-            local mob, _ = GetMon()
-            -- ── FIX: no mob found → idle safely, don't touch CFrame ──
+            local mob = GetMon()
             if not mob then continue end
 
             while _G.Farm do
-                -- Check mob is still alive before doing anything
-                local head = mob:FindFirstChild("Humanoid")
-                if not head or head.Health == <1 then break end
-
-                local mobHRP = mob:FindFirstChild("HumanoidRootPart")
-                if not mobHRP then break end
+                -- FIX: was `head.Health == <1` syntax error → IsMobAlive health check
+                if not IsMobAlive(mob) then break end
 
                 local currentChar = plr.Character
                 if not currentChar then break end
 
-                -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
-                -- HEIGHT OFFSET 7 = above mob, facing straight down
-                local ok = SafeTeleportToMob(mob,high)
-                if not ok then break end  -- mob died mid-frame, stop attacking it
+                local ok = SafeTeleportToMob(mob, high)
+                if not ok then break end
 
                 swingEvent:FireServer()
                 task.wait()
@@ -406,17 +361,13 @@ tab3:CreateToggle({
 
         local function GetMon()
             for _, mob in pairs(enemiesFolder:GetChildren()) do
-                if mob:IsA("Model") then
-                    local head = mob:FindFirstChild("Head")
-                    if head and head.Transparency ~= 1 then
-                        return mob, mob:FindFirstChild("HumanoidRootPart")
-                    end
+                if mob:IsA("Model") and IsMobAlive(mob) then
+                    return mob, mob:FindFirstChild("HumanoidRootPart", true)
                 end
             end
             return nil, nil
         end
 
-        -- Skill loop (parallel) — presses E then Q like a real player
         task.spawn(function()
             while _G.FarmEnemies do
                 PressKey(Enum.KeyCode.E)
@@ -426,28 +377,20 @@ tab3:CreateToggle({
             end
         end)
 
-        -- Main attack loop
         repeat
             task.wait()
-
-            local mob, _ = GetMon()
-            -- ── FIX: no mob found → idle safely, don't touch CFrame ──
+            local mob = GetMon()
             if not mob then continue end
 
             while _G.FarmEnemies do
-                local head = mob:FindFirstChild("Head")
-                if not head or head.Transparency == 1 then break end
-
-                local mobHRP = mob:FindFirstChild("HumanoidRootPart")
-                if not mobHRP then break end
+                -- FIX: was Transparency check → health check only
+                if not IsMobAlive(mob) then break end
 
                 local currentChar = plr.Character
                 if not currentChar then break end
 
-                -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
-                -- HEIGHT OFFSET 7.9 = above mob, facing straight down
-                local ok = SafeTeleportToMob(mob, 7.9)
-                if not ok then break end  -- mob died mid-frame
+                local ok = SafeTeleportToMob(mob, high)
+                if not ok then break end
 
                 swingEvent:FireServer()
                 task.wait()
