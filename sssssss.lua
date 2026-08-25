@@ -164,7 +164,7 @@ local function SafeTeleportToMob(mob, heightOffset)
         if not mobHead or not mobHead.Parent then return false end
         if mobHead.Transparency == 1 then return false end
 
-        local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 10, 0)
+        local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 1, 0)
 
         hrp.Anchored = true
         hrp.CFrame = CFrame.new(targetCFrame.Position, mobHead.Position)
@@ -359,7 +359,7 @@ tab2:CreateToggle({
 
                 -- Safe teleport: anchors for 1 frame, zeroes velocity, un-anchors
                 -- HEIGHT OFFSET 7 = above mob, facing straight down
-                local ok = SafeTeleportToMob(mob, 7)
+                local ok = SafeTeleportToMob(mob,10)
                 if not ok then break end  -- mob died mid-frame, stop attacking it
 
                 swingEvent:FireServer()
