@@ -168,7 +168,7 @@ local function SafeTeleportToMob(mob, heightOffset)
     if not hrp then return false end
 
     -- Position: above the mob
-    local targetPos = mobHRP.Position + Vector3.new(0, heightOffset, 0)
+    local targetPos = mobHRP.Position * Vector3.new(0, heightOffset, 0)
 
     -- Face straight down at the mob — no lateral tilt = no spin-up
     -- CFrame.lookAt(eye, target) points the -Z axis toward target.
