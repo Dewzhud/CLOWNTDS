@@ -160,14 +160,18 @@ local function SafeTeleportToMob(mob, heightOffset)
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
 
-        local mobHead = mob and mob:FindFirstChild("Humanoid")
+        local mobHead = mob and mob:FindFirstChild("Head", true)
         if not mobHead or not mobHead.Parent then return false end
-        if mobHead.Health <= 1 then return false end
 
-        local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 1, 0)
+        -- health check only
+        local hum = mob:FindFirstChildOfClass("Humanoid")
+               or mob:FindFirstChild("Humanoid", true)
+        if not hum or hum.Health <= 0 then return false end
+
+        local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 8, 0)
 
         hrp.Anchored = true
-        hrp.CFrame = CFrame.new(targetCFrame.Position, mobHead.Position)
+        hrp.CFrame   = CFrame.new(targetCFrame.Position, mobHead.Position)
         hrp.AssemblyLinearVelocity  = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
         hrp.Anchored = false
@@ -312,25 +316,26 @@ tab2:CreateToggle({
         local Dun = workspace:WaitForChild("dungeon", 30)
         if not Dun then warn("Dungeon folder never appeared!") return end
 
-        local function GetMon()
-            for _, room in pairs(Dun:GetChildren()) do
-                if (room:IsA("Model") or room:IsA("Folder"))
-                    and string.match(room.Name:lower(), "room")
-                then
-                    local EF = room:FindFirstChild("enemyFolder")
-                    if not EF then continue end
-                    for _, mob in pairs(EF:GetChildren()) do
-                        if mob:IsA("Model") then
-                            local head = mob:FindFirstChild("Head")
-                            if head and head.Transparency ~= 1 then
-                                return mob, mob:FindFirstChild("HumanoidRootPart")
-                            end
-                        end
+      local function GetMon()
+    for _, room in pairs(Dun:GetChildren()) do
+        if (room:IsA("Model") or room:IsA("Folder"))
+            and string.match(room.Name:lower(), "room")
+        then
+            local EF = room:FindFirstChild("enemyFolder")
+            if not EF then continue end
+            for _, mob in pairs(EF:GetChildren()) do
+                if mob:IsA("Model") then
+                    local hum = mob:FindFirstChildOfClass("Humanoid")
+                             or mob:FindFirstChild("Humanoid", true)
+                    if hum and hum.Health > 0 then
+                        return mob, mob:FindFirstChild("HumanoidRootPart")
                     end
                 end
             end
-            return nil, nil
         end
+    end
+    return nil, nil
+end
 
         local swingEvent = GetSwingEvent()
         if not swingEvent then warn("No swing RemoteEvent found!") return end
