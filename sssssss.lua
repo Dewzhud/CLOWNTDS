@@ -154,22 +154,27 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function SafeTeleportToMob(mob, heightOffset)
-    local char = game.Players.LocalPlayer.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
+    local success, result = pcall(function()
+        local char = game.Players.LocalPlayer.Character
+        if not char then return false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
 
-    local mobHead = mob and mob:FindFirstChild("Head")
-    if not mobHead or mobHead.Transparency == 1 then return false end
+        local mobHead = mob and mob:FindFirstChild("Head")
+        if not mobHead or not mobHead.Parent then return false end
+        if mobHead.Transparency == 1 then return false end
 
-    local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 8, 0)
+        local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 10, 0)
 
-    hrp.Anchored = true
-    hrp.CFrame = CFrame.new(targetCFrame.Position, mobHead.Position)
-    hrp.AssemblyLinearVelocity  = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
-    hrp.Anchored = false
-    return true
+        hrp.Anchored = true
+        hrp.CFrame = CFrame.new(targetCFrame.Position, mobHead.Position)
+        hrp.AssemblyLinearVelocity  = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Anchored = false
+        return true
+    end)
+
+    return success and result == true
 end
 -- ─────────────────────────────────────────────────────────────────────────────
 --   TAB 1 – ROOM
