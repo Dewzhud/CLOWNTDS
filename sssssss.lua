@@ -64,7 +64,7 @@ local LocalPlayer = Players.LocalPlayer
 local StageName = "Desert Temple"
 local Difficult = "Easy"
 local SkillCooldown = 4
-local high = 7
+local high = 9.7
 
 _G.IsHc = false
 _G.AutoRoom = false
