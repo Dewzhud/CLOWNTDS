@@ -154,28 +154,27 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function SafeTeleportToMob(mob, heightOffset)
-    
-
-    local mobHRP = mob and mob:FindFirstChild("HumanoidRootPart")
-    if not mobHRP then return false end
-
-    local head = mob:FindFirstChild("Head")
-    if not head or head.Transparency == 1 then return false end
-
     local char = game.Players.LocalPlayer.Character
     if not char then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    -- Position: above the mob
-    local targetPos = mobHRP.Position * Vector3.new(0, 10, 0)
+    -- Try HumanoidRootPart first, fall back to Head
+    local mobHRP = mob and mob:FindFirstChild("HumanoidRootPart")
+    local mobHead = mob and mob:FindFirstChild("Head")
 
+    if not mobHRP and not mobHead then return false end
 
-    -- Anchor → write CFrame → zero velocities → un-anchor (one-frame window)
+    -- Check head visibility
+    if not mobHead or mobHead.Transparency == 1 then return false end
+
+    -- Use Head position as fallback if HRP is nil
+    local refPart = mobHRP or mobHead
+    local targetPos = refPart.Position + Vector3.new(0, heightOffset or 7, 0)
+
     hrp.Anchored = true
-    hrp.CFrame   = CFrame.LookAt( hrp.Position ,targetPos)
+    hrp.CFrame = CFrame.new(targetPos, mobHead.Position) -- face toward mob head
 
-    -- Kill any residual velocity the engine may have accumulated
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 
