@@ -1256,7 +1256,7 @@ tab3:CreateToggle({
                     then
                         break
                     end
-
+if mob == "Demonic Pirate Captain " then break end
                     local mobHRP =
                         mob:FindFirstChild(
                             "HumanoidRootPart",
