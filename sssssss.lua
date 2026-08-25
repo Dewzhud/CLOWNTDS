@@ -169,7 +169,7 @@ local function SafeTeleportToMob(mob, heightOffset)
     if not mobHead or mobHead.Transparency == 1 then return false end
 
     -- Use Head position as fallback if HRP is nil
-    local refPart = mobHRP or mobHead
+    local refPart = mobHead
     local targetPos = refPart.Position * Vector3.new(0, heightOffset or 7, 0)
 
     hrp.Anchored = true
