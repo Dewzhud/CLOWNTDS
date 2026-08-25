@@ -159,29 +159,18 @@ local function SafeTeleportToMob(mob, heightOffset)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
 
-    -- Try HumanoidRootPart first, fall back to Head
-    local mobHRP = mob and mob:FindFirstChild("HumanoidRootPart")
     local mobHead = mob and mob:FindFirstChild("Head")
-
-    if not mobHRP and not mobHead then return false end
-
-    -- Check head visibility
     if not mobHead or mobHead.Transparency == 1 then return false end
 
-    -- Use Head position as fallback if HRP is nil
-    local refPart = mobHead
-    local targetPos = refPart.CFrame + CFrame.new(0, heightOffset or 8, 0)
+    local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 8, 0)
 
     hrp.Anchored = true
-    hrp.CFrame = CFrame.new(targetPos, mobHead.Position) -- face toward mob head
-
+    hrp.CFrame = CFrame.new(targetCFrame.Position, mobHead.Position)
     hrp.AssemblyLinearVelocity  = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
-
     hrp.Anchored = false
     return true
 end
-
 -- ─────────────────────────────────────────────────────────────────────────────
 --   TAB 1 – ROOM
 -- ─────────────────────────────────────────────────────────────────────────────
