@@ -170,7 +170,7 @@ local function SafeTeleportToMob(mob, heightOffset)
 
     -- Use Head position as fallback if HRP is nil
     local refPart = mobHead
-    local targetPos = refPart.Position * Vector3.new(0, heightOffset or 7, 0)
+    local targetPos = refPart.Position + Vector3.new(0, heightOffset or 8, 0)
 
     hrp.Anchored = true
     hrp.CFrame = CFrame.new(targetPos, mobHead.Position) -- face toward mob head
