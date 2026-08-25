@@ -258,9 +258,9 @@ tab2:CreateToggle({
 local high = 7
 tab2:CreateSlider({
     name     = "Height",
-    min      = 7,
+    min      = 9,
     max      = 15,
-    value    = 7,
+    value    = 9.7,
     callback = function(value) high = value end,
 })
 
