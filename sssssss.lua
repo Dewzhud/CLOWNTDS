@@ -254,27 +254,19 @@ end
     Returns a CFrame for HRP.
 ]]
 local function ComputeDodgeCFrame(myPos, dangerPos, mobPos)
-    -- Face toward the mob
-    local lookDir = (mobPos - myPos)
-    if lookDir.Magnitude < 0.1 then
-        lookDir = Vector3.new(1, 0, 0)
-    end
-    lookDir = lookDir.Unit
+    local toDanger = dangerPos - myPos
+    toDanger = Vector3.new(toDanger.X, 0, toDanger.Z)
 
-    -- Right-perpendicular (flat)
-    local right = Vector3.new(-lookDir.Z, 0, lookDir.X).Unit
+    local away = Vector3.new(-toDanger.Z, 0, toDanger.X).Unit
 
-    -- Direction away from danger
-    local toDanger = (dangerPos - myPos)
-    local dot      = right:Dot(toDanger)
+    local dodgePos = Vector3.new(
+        dangerPos.X + away.X * 20,
+        myPos.Y,
+        dangerPos.Z + away.Z * 20
+    )
 
-    -- Slide away from danger side
-    local slideDir = (dot >= 0) and -right or right
-
-    local dodgePos = myPos + slideDir * DODGE_DIST
     return CFrame.new(dodgePos, Vector3.new(mobPos.X, dodgePos.Y, mobPos.Z))
 end
-
 --========================================================--
 -- SAFE TELEPORT  (with danger dodge)
 --========================================================--
