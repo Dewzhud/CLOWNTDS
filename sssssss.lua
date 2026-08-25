@@ -168,12 +168,12 @@ local function SafeTeleportToMob(mob, heightOffset)
     if not hrp then return false end
 
     -- Position: above the mob
-    local targetPos = mobHRP.CFrame * CFrame.new(0, 9.5, 0)
+    local targetPos = mobHRP.Position * Vector3.new(0, 9.5, 0)
 
 
     -- Anchor → write CFrame → zero velocities → un-anchor (one-frame window)
     hrp.Anchored = true
-    hrp.CFrame   = targetPos
+    hrp.CFrame   = CFrame.LookAt( hrp.Position ,targetPos)
 
     -- Kill any residual velocity the engine may have accumulated
     hrp.AssemblyLinearVelocity  = Vector3.zero
