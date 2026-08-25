@@ -160,9 +160,9 @@ local function SafeTeleportToMob(mob, heightOffset)
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
 
-        local mobHead = mob and mob:FindFirstChild("Head")
+        local mobHead = mob and mob:FindFirstChild("Humanoid")
         if not mobHead or not mobHead.Parent then return false end
-        if mobHead.Transparency == 1 then return false end
+        if mobHead.Health <= 1 then return false end
 
         local targetCFrame = mobHead.CFrame * CFrame.new(0, heightOffset or 1, 0)
 
