@@ -1,113 +1,124 @@
 repeat task.wait() until game:IsLoaded()
+
 local TweenService = game:GetService("TweenService")
-
-local User = getgenv().Config or {}
-
-local FILE = User.File or "Wanda4X/recorder.lua"
-local CLICK_OFFSET_X = User.ClickOffsetX or -10
-local CLICK_OFFSET_Y = User.ClickOffsetY or 0
-
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
 
+if getgenv().WandaPlaybackRunning then
+    return warn("Playback already running")
+end
+getgenv().WandaPlaybackRunning = true
 
-local TEXT = "WandaSploit"
+local User = getgenv().Config or {}
 
-local RED = Color3.fromRGB(220, 20, 40)
-local BLACK = Color3.fromRGB(0, 0, 0)
-local WHITE = Color3.fromRGB(255, 255, 255)
+local FILE = "Wanda4X/" .. (User.FileName or "recorder.lua")
+local CLICK_OFFSET_X = User.ClickOffsetX or 0
+local CLICK_OFFSET_Y = User.ClickOffsetY or 55
 
-local parent = (gethui and gethui()) or Players.LocalPlayer:WaitForChild("PlayerGui")
+if not isfile(FILE) then
+    getgenv().WandaPlaybackRunning = false
+    return warn("File not found:", FILE)
+end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "WandaIntro"
-gui.IgnoreGuiInset = true
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 999
-gui.Parent = parent
-
--- Black backdrop
-local bg = Instance.new("Frame")
-bg.Size = UDim2.fromScale(1, 1)
-bg.BackgroundColor3 = BLACK
-bg.BackgroundTransparency = 1
-bg.BorderSizePixel = 0
-bg.Parent = gui
-
--- Main text
-local label = Instance.new("TextLabel")
-label.AnchorPoint = Vector2.new(0.5, 0.5)
-label.Position = UDim2.fromScale(0.5, 0.5)
-label.Size = UDim2.fromScale(0.6, 0.2)
-label.BackgroundTransparency = 1
-label.Text = TEXT
-label.Font = Enum.Font.GothamBlack
-label.TextScaled = true
-label.TextColor3 = WHITE
-label.TextTransparency = 1
-label.Parent = bg
-
-local stroke = Instance.new("UIStroke")
-stroke.Thickness = 3
-stroke.Color = RED
-stroke.Transparency = 1
-stroke.Parent = label
-
-local scale = Instance.new("UIScale")
-scale.Scale = 0.5
-scale.Parent = label
-
-local gradient = Instance.new("UIGradient")
-gradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, WHITE),
-    ColorSequenceKeypoint.new(0.5, RED),
-    ColorSequenceKeypoint.new(1, WHITE),
-})
-gradient.Parent = label
-
--- Red line under the text
-local line = Instance.new("Frame")
-line.AnchorPoint = Vector2.new(0.5, 0)
-line.Position = UDim2.fromScale(0.5, 0.62)
-line.Size = UDim2.fromScale(0, 0.006)
-line.BackgroundColor3 = RED
-line.BorderSizePixel = 0
-line.Parent = bg
-
-local inInfo = TweenInfo.new(0.8, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local lineInfo = TweenInfo.new(0.9, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local outInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-
--- Animate in
-TweenService:Create(bg, inInfo, { BackgroundTransparency = 0.25 }):Play()
-TweenService:Create(label, inInfo, { TextTransparency = 0 }):Play()
-TweenService:Create(stroke, inInfo, { Transparency = 0 }):Play()
-TweenService:Create(scale, inInfo, { Scale = 1 }):Play()
-TweenService:Create(line, lineInfo, { Size = UDim2.fromScale(0.4, 0.006) }):Play()
-
--- Moving gradient
+---------------------------------------------------------------------
+-- INTRO (runs on its own thread so playback does not wait for it)
+---------------------------------------------------------------------
 task.spawn(function()
-    while gui.Parent do
-        gradient.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.5, 0)
-        task.wait()
-    end
+    local TEXT = "WandaSploit"
+
+    local RED = Color3.fromRGB(220, 20, 40)
+    local BLACK = Color3.fromRGB(0, 0, 0)
+    local WHITE = Color3.fromRGB(255, 255, 255)
+
+    local parent = (gethui and gethui()) or Players.LocalPlayer:WaitForChild("PlayerGui")
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "WandaIntro"
+    gui.IgnoreGuiInset = true
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 999
+    gui.Parent = parent
+
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.fromScale(1, 1)
+    bg.BackgroundColor3 = BLACK
+    bg.BackgroundTransparency = 1
+    bg.BorderSizePixel = 0
+    bg.Parent = gui
+
+    local label = Instance.new("TextLabel")
+    label.AnchorPoint = Vector2.new(0.5, 0.5)
+    label.Position = UDim2.fromScale(0.5, 0.5)
+    label.Size = UDim2.fromScale(0.6, 0.2)
+    label.BackgroundTransparency = 1
+    label.Text = TEXT
+    label.Font = Enum.Font.GothamBlack
+    label.TextScaled = true
+    label.TextColor3 = WHITE
+    label.TextTransparency = 1
+    label.Parent = bg
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 3
+    stroke.Color = RED
+    stroke.Transparency = 1
+    stroke.Parent = label
+
+    local scale = Instance.new("UIScale")
+    scale.Scale = 0.5
+    scale.Parent = label
+
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, WHITE),
+        ColorSequenceKeypoint.new(0.5, RED),
+        ColorSequenceKeypoint.new(1, WHITE),
+    })
+    gradient.Parent = label
+
+    local underline = Instance.new("Frame")
+    underline.AnchorPoint = Vector2.new(0.5, 0)
+    underline.Position = UDim2.fromScale(0.5, 0.62)
+    underline.Size = UDim2.fromScale(0, 0.006)
+    underline.BackgroundColor3 = RED
+    underline.BorderSizePixel = 0
+    underline.Parent = bg
+
+    local inInfo = TweenInfo.new(0.8, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local lineInfo = TweenInfo.new(0.9, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    local outInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+    TweenService:Create(bg, inInfo, { BackgroundTransparency = 0.25 }):Play()
+    TweenService:Create(label, inInfo, { TextTransparency = 0 }):Play()
+    TweenService:Create(stroke, inInfo, { Transparency = 0 }):Play()
+    TweenService:Create(scale, inInfo, { Scale = 1 }):Play()
+    TweenService:Create(underline, lineInfo, { Size = UDim2.fromScale(0.4, 0.006) }):Play()
+
+    task.spawn(function()
+        while gui.Parent do
+            gradient.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.5, 0)
+            task.wait()
+        end
+    end)
+
+    task.wait(2.5)
+
+    TweenService:Create(bg, outInfo, { BackgroundTransparency = 1 }):Play()
+    TweenService:Create(label, outInfo, { TextTransparency = 1 }):Play()
+    TweenService:Create(stroke, outInfo, { Transparency = 1 }):Play()
+    TweenService:Create(underline, outInfo, { Size = UDim2.fromScale(0, 0.006) }):Play()
+    local last = TweenService:Create(scale, outInfo, { Scale = 1.4 })
+    last:Play()
+    last.Completed:Wait()
+
+    gui:Destroy()
 end)
 
-task.wait(2.5)
-
--- Animate out
-TweenService:Create(bg, outInfo, { BackgroundTransparency = 1 }):Play()
-TweenService:Create(label, outInfo, { TextTransparency = 1 }):Play()
-TweenService:Create(stroke, outInfo, { Transparency = 1 }):Play()
-TweenService:Create(line, outInfo, { Size = UDim2.fromScale(0, 0.006) }):Play()
-local last = TweenService:Create(scale, outInfo, { Scale = 1.4 })
-last:Play()
-last.Completed:Wait()
-
-gui:Destroy()
-
+---------------------------------------------------------------------
+-- BASICS
+---------------------------------------------------------------------
 local CATS = { "ModeVote", "TowerAdd", "TowerUpgrade", "TowerSell", "WaveSkip", "PlayAgain", "AutoSkip" }
 local TOL = 0.09   -- how close the model pivot must be to the placed position
 
@@ -133,37 +144,37 @@ local function nums(s)
     return t
 end
 
-local function parseLine(line)
+local function parseLine(text)
     local cat
     for _, c in ipairs(CATS) do
-        if line:find(c .. "%s*{") then cat = c break end
+        if text:find(c .. "%s*{") then cat = c break end
     end
     if not cat then return end
 
-    local time = line:match('Time = "(%d+:%d+)')
+    local time = text:match('Time = "(%d+:%d+)')
     if not time then return end
 
     local d = { Category = cat, Time = time, Sec = sec(time) }
 
     if cat == "TowerAdd" then
-        d.Name   = line:match('Name = "(.-)"')
-        d.UnitId = line:match('UnitId = "(.-)"')
-        d.Index  = tonumber(line:match("Index = (%d+)"))
-        local pos = line:match("Pos = (%b{})")
-        local cf  = line:match("CFrame = (%b{})")
+        d.Name   = text:match('Name = "(.-)"')
+        d.UnitId = text:match('UnitId = "(.-)"')
+        d.Index  = tonumber(text:match("Index = (%d+)"))
+        local pos = text:match("Pos = (%b{})")
+        local cf  = text:match("CFrame = (%b{})")
         if not (d.Name and d.UnitId and pos and cf) then return end
         d.Pos, d.CFrame = nums(pos), nums(cf)
 
     elseif cat == "TowerUpgrade" or cat == "TowerSell" then
-        d.Id = line:match('Id = "([%w%-]+)') or line:match('Name = "([%w%-]+)')
-        local n = tonumber(line:match("Tower = (%d+)"))
+        d.Id = text:match('Id = "([%w%-]+)') or text:match('Name = "([%w%-]+)')
+        local n = tonumber(text:match("Tower = (%d+)"))
         d.Index = (n and n > 0) and n or nil
 
     elseif cat == "ModeVote" then
-        d.Value = line:match('Value = "([^"]-)"') or line:match('{%s*"([%w ]+)')
+        d.Value = text:match('Value = "([^"]-)"') or text:match('{%s*"([%w ]+)')
 
     elseif cat == "AutoSkip" then
-        d.Value = line:match('Value = "(%a+)"') == "true"
+        d.Value = text:match('Value = "(%a+)"') == "true"
     end
 
     return d
@@ -177,8 +188,8 @@ local placed = 0
 local free = {}          -- old logs only: towers without a recorded id yet
 local idToIndex = {}     -- old logs only: recorded id -> placement number
 
-for _, line in ipairs(readfile(FILE):split("\n")) do
-    local d = parseLine(line)
+for _, text in ipairs(readfile(FILE):split("\n")) do
+    local d = parseLine(text)
     if d then
         if d.Category == "ModeVote" then
             table.insert(votes, d)
@@ -189,7 +200,6 @@ for _, line in ipairs(readfile(FILE):split("\n")) do
                 table.insert(free, d.Index)
 
             elseif d.Id and not d.Index then
-                -- old log (no "Tower = N"): guess from placement order
                 if not idToIndex[d.Id] and #free > 0 then
                     idToIndex[d.Id] = table.remove(free)
                 end
@@ -251,7 +261,6 @@ local function waitForNewId(cf)
     end
 end
 
--- wait until the tower's new id is known (so upgrades don't skip too early)
 local function getId(index)
     local t0 = os.clock()
     while index and not NewIds[index] and os.clock() - t0 < 2 do
@@ -270,11 +279,10 @@ local function getAutoSkip()
     if ok and btn then return btn, btn:FindFirstChild("UI2") end
 end
 
-
 local function clickGui(btn)
     local center = btn.AbsolutePosition + btn.AbsoluteSize / 2
-    local gui = btn:FindFirstAncestorOfClass("ScreenGui")
-    local inset = (gui and gui.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
+    local screen = btn:FindFirstAncestorOfClass("ScreenGui")
+    local inset = (screen and screen.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
 
     local x = center.X + inset.X + CLICK_OFFSET_X
     local y = center.Y + inset.Y + CLICK_OFFSET_Y
@@ -341,8 +349,8 @@ actions.AutoSkip = function(d)
             print("  AutoSkip is", d.Value)
             return
         end
-        clickGui(btn)       -- state differs: click
-        task.wait(0.4)      -- then check again; click again if still wrong
+        clickGui(btn)
+        task.wait(0.4)
     end
     warn("  AutoSkip still not", d.Value)
 end
@@ -353,7 +361,6 @@ end
 local Running = true
 getgenv().StopPlayback = function() Running = false end
 
--- votes happen in the lobby (00:00), so fire them right away
 for _, d in ipairs(votes) do
     local ok, err = pcall(send, "ModeVote", d.Value)
     print(ok and "Played" or "FAILED", "ModeVote", d.Value, ok and "" or err)
@@ -362,17 +369,18 @@ end
 local i = 1
 while Running and i <= #lines do
     local d = lines[i]
-    local label = gettime()
-    local now = label and sec(label)
+    local clock = gettime()
+    local now = clock and sec(clock)
 
     if now and now >= d.Sec then
         local ok, err = pcall(actions[d.Category], d)
         print(ok and "Played" or "FAILED", d.Category, d.Time, ok and "" or err)
         i += 1
-        task.wait(.1)   -- small gap between actions at the same second
+        task.wait(0.1)
     else
-        task.wait(.1)
+        task.wait(0.1)
     end
 end
 
+getgenv().WandaPlaybackRunning = false
 print("Playback finished")
