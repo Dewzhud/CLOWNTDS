@@ -1,5 +1,5 @@
 repeat task.wait() until game:IsLoaded()
-
+local TweenService = game:GetService("TweenService")
 
 local User = getgenv().Config or {}
 
@@ -12,6 +12,101 @@ local RS = game:GetService("ReplicatedStorage")
 local VIM = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
 
+
+local TEXT = "WandaSploit"
+
+local RED = Color3.fromRGB(220, 20, 40)
+local BLACK = Color3.fromRGB(0, 0, 0)
+local WHITE = Color3.fromRGB(255, 255, 255)
+
+local parent = (gethui and gethui()) or Players.LocalPlayer:WaitForChild("PlayerGui")
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "WandaIntro"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.Parent = parent
+
+-- Black backdrop
+local bg = Instance.new("Frame")
+bg.Size = UDim2.fromScale(1, 1)
+bg.BackgroundColor3 = BLACK
+bg.BackgroundTransparency = 1
+bg.BorderSizePixel = 0
+bg.Parent = gui
+
+-- Main text
+local label = Instance.new("TextLabel")
+label.AnchorPoint = Vector2.new(0.5, 0.5)
+label.Position = UDim2.fromScale(0.5, 0.5)
+label.Size = UDim2.fromScale(0.6, 0.2)
+label.BackgroundTransparency = 1
+label.Text = TEXT
+label.Font = Enum.Font.GothamBlack
+label.TextScaled = true
+label.TextColor3 = WHITE
+label.TextTransparency = 1
+label.Parent = bg
+
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 3
+stroke.Color = RED
+stroke.Transparency = 1
+stroke.Parent = label
+
+local scale = Instance.new("UIScale")
+scale.Scale = 0.5
+scale.Parent = label
+
+local gradient = Instance.new("UIGradient")
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, WHITE),
+    ColorSequenceKeypoint.new(0.5, RED),
+    ColorSequenceKeypoint.new(1, WHITE),
+})
+gradient.Parent = label
+
+-- Red line under the text
+local line = Instance.new("Frame")
+line.AnchorPoint = Vector2.new(0.5, 0)
+line.Position = UDim2.fromScale(0.5, 0.62)
+line.Size = UDim2.fromScale(0, 0.006)
+line.BackgroundColor3 = RED
+line.BorderSizePixel = 0
+line.Parent = bg
+
+local inInfo = TweenInfo.new(0.8, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local lineInfo = TweenInfo.new(0.9, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local outInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+-- Animate in
+TweenService:Create(bg, inInfo, { BackgroundTransparency = 0.25 }):Play()
+TweenService:Create(label, inInfo, { TextTransparency = 0 }):Play()
+TweenService:Create(stroke, inInfo, { Transparency = 0 }):Play()
+TweenService:Create(scale, inInfo, { Scale = 1 }):Play()
+TweenService:Create(line, lineInfo, { Size = UDim2.fromScale(0.4, 0.006) }):Play()
+
+-- Moving gradient
+task.spawn(function()
+    while gui.Parent do
+        gradient.Offset = Vector2.new(math.sin(os.clock() * 2) * 0.5, 0)
+        task.wait()
+    end
+end)
+
+task.wait(2.5)
+
+-- Animate out
+TweenService:Create(bg, outInfo, { BackgroundTransparency = 1 }):Play()
+TweenService:Create(label, outInfo, { TextTransparency = 1 }):Play()
+TweenService:Create(stroke, outInfo, { Transparency = 1 }):Play()
+TweenService:Create(line, outInfo, { Size = UDim2.fromScale(0, 0.006) }):Play()
+local last = TweenService:Create(scale, outInfo, { Scale = 1.4 })
+last:Play()
+last.Completed:Wait()
+
+gui:Destroy()
 
 local CATS = { "ModeVote", "TowerAdd", "TowerUpgrade", "TowerSell", "WaveSkip", "PlayAgain", "AutoSkip" }
 local TOL = 0.09   -- how close the model pivot must be to the placed position
